@@ -69,7 +69,7 @@ h2{font-family:var(--display);font-weight:600;font-size:clamp(28px,3.6vw,40px);l
 .svc li{padding-left:20px;position:relative}
 .svc li::before{content:"";position:absolute;left:0;top:.62em;width:10px;height:2px;background:var(--accent)}
 .industries{background:var(--soft)}
-.ind-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-top:40px}
+.ind-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:40px}
 .ind{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 16px;font-family:var(--display);font-weight:500}
 .ind small{display:block;font-family:var(--body);font-weight:400;color:var(--muted);font-size:12.5px;margin-top:4px}
 .stack{display:flex;flex-wrap:wrap;gap:8px;margin-top:36px}
@@ -157,14 +157,14 @@ body.cv-mode #cv{display:block}
 <main id="home">
   <header class="hero" id="top">
     <div class="wrap">
-      <div class="status"><i></i>Java Software Engineer @ Moxymind · Bratislava</div>
+      <div class="status"><i></i>Software Engineer (Java) · Solar Turbines via Moxymind · Bratislava</div>
       <h1>
         <span data-l="sk">Backend v <em>Jave</em>, ktorý vydrží.<br>Testy, ktoré ho to <em>dokážu</em>.</span>
         <span data-l="en">Java backends that hold up.<br>Tests that <em>prove</em> it.</span>
       </h1>
       <p class="lead">
-        <span data-l="sk">Som softvérový inžinier so zameraním na Java / Spring Boot a test automation. Za sebou mám projekty v bankovníctve, telco, gamingu, energetike a food delivery – od analýzy požiadaviek až po nasadenie na AWS.</span>
-        <span data-l="en">I'm a software engineer focused on Java / Spring Boot and test automation, with projects across banking, telco, gaming, energy and food delivery – from requirements analysis all the way to deployment on AWS.</span>
+        <span data-l="sk">Som softvérový inžinier so zameraním na Java / Spring Boot a test automation. Za sebou mám projekty v priemysle, energetike, bankovníctve, telco, gamingu a food delivery – od analýzy požiadaviek až po nasadenie na AWS.</span>
+        <span data-l="en">I'm a software engineer focused on Java / Spring Boot and test automation, with projects across industry, energy, banking, telco, gaming and food delivery – from requirements analysis all the way to deployment on AWS.</span>
       </p>
       <div class="cta-row">
         <a class="btn primary" href="#contact"><span data-l="sk">Napíšte mi</span><span data-l="en">Get in touch</span> →</a>
@@ -174,7 +174,7 @@ body.cv-mode #cv{display:block}
         <div><b>13+</b><span data-l="sk">rokov v inžinierstve</span><span data-l="en">years in engineering</span></div>
         <div><b>8+</b><span data-l="sk">rokov v softvéri</span><span data-l="en">years in software</span></div>
         <div><b>5</b><span data-l="sk">automatizačných frameworkov od nuly</span><span data-l="en">test frameworks built from scratch</span></div>
-        <div><b>6</b><span data-l="sk">odvetví</span><span data-l="en">industries</span></div>
+        <div><b>7</b><span data-l="sk">odvetví</span><span data-l="en">industries</span></div>
       </div>
     </div>
   </header>
@@ -191,7 +191,8 @@ body.cv-mode #cv{display:block}
           <h3><span data-l="sk">Backend vývoj v Jave</span><span data-l="en">Java backend development</span></h3>
           <p><span data-l="sk">Mikroslužby na Spring Boot pre náročné, dátovo bohaté domény.</span><span data-l="en">Spring Boot microservices for demanding, data-heavy domains.</span></p>
           <ul>
-            <li>Java, Spring Boot, PostgreSQL, Gradle</li>
+            <li>Java 21, Spring Boot 3, REST API / Swagger</li>
+            <li>PostgreSQL, Oracle, Redis</li>
             <li><span data-l="sk">Event-driven architektúra – Kafka, MQTT</span><span data-l="en">Event-driven architecture – Kafka, MQTT</span></li>
             <li><span data-l="sk">Unit a integračné testy ako súčasť každej feature</span><span data-l="en">Unit and integration tests with every feature</span></li>
             <li><span data-l="sk">Analýza požiadaviek a návrh riešenia v agile tíme</span><span data-l="en">Requirements analysis and solution design in agile teams</span></li>
@@ -239,6 +240,7 @@ body.cv-mode #cv{display:block}
       <div class="eyebrow"><span data-l="sk">Skúsenosti z odvetví</span><span data-l="en">Industry experience</span></div>
       <h2><span data-l="sk">Rôzne domény, rovnaký dôraz na kvalitu</span><span data-l="en">Different domains, the same focus on quality</span></h2>
       <div class="ind-grid">
+        <div class="ind"><span data-l="sk">Priemysel</span><span data-l="en">Industrial</span><small><span data-l="sk">Turbíny, InSight platforma</span><span data-l="en">Turbines, InSight platform</span></small></div>
         <div class="ind"><span data-l="sk">Energetika</span><span data-l="en">Energy</span><small><span data-l="sk">AI obchodovanie, batérie</span><span data-l="en">AI trading, batteries</span></small></div>
         <div class="ind">Telco<small><span data-l="sk">Mobilná automatizácia</span><span data-l="en">Mobile automation</span></small></div>
         <div class="ind"><span data-l="sk">Bankovníctvo</span><span data-l="en">Banking</span><small>Temenos T24</small></div>
@@ -247,7 +249,7 @@ body.cv-mode #cv{display:block}
         <div class="ind">Pharma<small><span data-l="sk">Validácia zariadení</span><span data-l="en">Equipment validation</span></small></div>
       </div>
       <div class="stack">
-        <span class="tag">Java</span><span class="tag">Spring Boot</span><span class="tag">PostgreSQL</span><span class="tag">Kafka</span><span class="tag">MQTT</span><span class="tag">AWS</span><span class="tag">Docker</span><span class="tag">Gradle</span><span class="tag">Maven</span><span class="tag">Grafana</span><span class="tag">Prometheus</span><span class="tag">ELK</span><span class="tag">Selenium</span><span class="tag">Cypress</span><span class="tag">Appium</span><span class="tag">Serenity</span><span class="tag">REST Assured</span><span class="tag">JUnit</span><span class="tag">jMeter</span><span class="tag">Jenkins</span><span class="tag">GitLab</span><span class="tag">BrowserStack</span>
+        <span class="tag">Java 21</span><span class="tag">Spring Boot 3</span><span class="tag">PostgreSQL</span><span class="tag">Oracle</span><span class="tag">Redis</span><span class="tag">Swagger</span><span class="tag">Kafka</span><span class="tag">MQTT</span><span class="tag">AWS</span><span class="tag">Docker</span><span class="tag">Gradle</span><span class="tag">Maven</span><span class="tag">Grafana</span><span class="tag">Prometheus</span><span class="tag">ELK</span><span class="tag">Selenium</span><span class="tag">Cypress</span><span class="tag">Appium</span><span class="tag">Serenity</span><span class="tag">REST Assured</span><span class="tag">JUnit</span><span class="tag">jMeter</span><span class="tag">Jenkins</span><span class="tag">GitLab</span><span class="tag">BrowserStack</span>
       </div>
     </div>
   </section>
@@ -285,7 +287,7 @@ body.cv-mode #cv{display:block}
       <aside class="cv-side">
         <div class="cv-avatar">PB</div>
         <h1>Peter Barci</h1>
-        <div class="role">Java Software Engineer</div>
+        <div class="role">Software Engineer (Java)</div>
 
         <h4><span data-l="sk">Kontakt</span><span data-l="en">Contact</span></h4>
         <a class="ci" href="mailto:barci.peter@gmail.com">barci.peter@gmail.com</a>
@@ -293,8 +295,8 @@ body.cv-mode #cv{display:block}
         <span class="ci">Bratislava, <span data-l="sk">Slovensko</span><span data-l="en">Slovakia</span></span>
 
         <h4><span data-l="sk">Zručnosti</span><span data-l="en">Skills</span></h4>
-        <div class="skill-group"><b>Backend</b><p>Java, Spring Boot, PostgreSQL, Kafka, MQTT, Gradle, Maven, Lombok</p></div>
-        <div class="skill-group"><b>Cloud & DevOps</b><p>AWS, Docker, Jenkins, GitHub, GitLab, Bitbucket</p></div>
+        <div class="skill-group"><b>Backend</b><p>Java 21, Spring Boot 3, REST / Swagger, PostgreSQL, Oracle, Redis, Kafka, MQTT, Gradle, Maven</p></div>
+        <div class="skill-group"><b>Cloud & DevOps</b><p>AWS, Docker, Jenkins, Azure DevOps, GitHub, GitLab, Bitbucket, Sonar</p></div>
         <div class="skill-group"><b>Observability</b><p>Grafana, Prometheus, ELK stack</p></div>
         <div class="skill-group"><b>Test Automation</b><p>Selenium WebDriver, Cypress, Serenity, Appium, REST Assured, JUnit, WireMock, Postman, TestRail, BrowserStack</p></div>
         <div class="skill-group"><b>Performance</b><p>jMeter, Taurus, BlazeMeter</p></div>
@@ -308,14 +310,22 @@ body.cv-mode #cv{display:block}
       <div class="cv-main">
         <h3 class="sec"><span data-l="sk">Profil</span><span data-l="en">Profile</span></h3>
         <p class="cv-summary">
-          <span data-l="sk">Softvérový inžinier so špecializáciou na vývoj v Java / Spring Boot a test automation, so skúsenosťami z bankovníctva, telco, gamingu, energetiky a food delivery. Pracujem agilne a dodávam kvalitné riešenia od analýzy požiadaviek až po nasadenie na AWS. V PowereX Energy som vyvíjal systémy pre AI obchodovanie so zelenou energiou a správu batérií; v Moxymind som budoval automatizačné frameworky od nuly a viedol frontend aj backend testovanie.</span>
-          <span data-l="en">Software engineer specialising in Java / Spring Boot development and test automation, with experience across banking, telco, gaming, energy and food delivery. I work in agile teams and deliver high-quality solutions from requirements analysis to deployment on AWS. At PowereX Energy I built systems for AI-driven green energy trading and smart battery management; at Moxymind I built test automation frameworks from scratch and led frontend and backend automation testing.</span>
+          <span data-l="sk">Softvérový inžinier so špecializáciou na vývoj v Java / Spring Boot a test automation, so skúsenosťami z bankovníctva, telco, gamingu, energetiky, priemyslu a food delivery. Pracujem agilne a dodávam kvalitné riešenia od analýzy požiadaviek až po nasadenie na AWS. Aktuálne vyvíjam backend platformy InSight pre Solar Turbines (Caterpillar). Predtým som v PowereX Energy vyvíjal systémy pre AI obchodovanie so zelenou energiou a správu batérií; v Moxymind som budoval automatizačné frameworky od nuly a viedol frontend aj backend testovanie.</span>
+          <span data-l="en">Software engineer specialising in Java / Spring Boot development and test automation, with experience across banking, telco, gaming, energy, industry and food delivery. I work in agile teams and deliver high-quality solutions from requirements analysis to deployment on AWS. Currently I develop the backend of the InSight Platform for Solar Turbines (Caterpillar). Before that, at PowereX Energy I built systems for AI-driven green energy trading and smart battery management; at Moxymind I built test automation frameworks from scratch and led frontend and backend automation testing.</span>
         </p>
 
         <h3 class="sec"><span data-l="sk">Pracovné skúsenosti</span><span data-l="en">Work experience</span></h3>
 
         <div class="job">
-          <div class="job-head"><div><h5>Java Software Engineer</h5><div class="co">Moxymind · Bratislava</div></div><div class="date">12/2024 – <span data-l="sk">súčasnosť</span><span data-l="en">present</span></div></div>
+          <div class="job-head"><div><h5>Software Engineer (Java)</h5><div class="co">Moxymind · Solar Turbines (Solar Digital)</div></div><div class="date">12/2024 – <span data-l="sk">súčasnosť</span><span data-l="en">present</span></div></div>
+          <div class="ctx"><span data-l="sk">InSight Platform – digitálne riešenia pre správu životného cyklu priemyselných turbín (Caterpillar group)</span><span data-l="en">InSight Platform – digital solutions for lifecycle management of industrial turbines (Caterpillar group)</span></div>
+          <ul>
+            <li><span data-l="sk">Analýza požiadaviek, návrh, vývoj a testovanie features aj celých aplikácií pre rozsiahlu enterprise platformu</span><span data-l="en">Requirements analysis, design, development and testing of features and whole applications for a large-scale enterprise platform</span></li>
+            <li><span data-l="sk">Backend na Java 21 a Spring Boot 3 s REST API (Swagger), Redis, PostgreSQL a Oracle</span><span data-l="en">Backend on Java 21 and Spring Boot 3 with REST APIs (Swagger), Redis, PostgreSQL and Oracle</span></li>
+            <li><span data-l="sk">Riešenie technických problémov, údržba a opravy existujúceho kódu, code review</span><span data-l="en">Technical problem solving, maintaining and fixing the existing code base, peer reviews</span></li>
+            <li><span data-l="sk">Spolupráca so software a test inžiniermi, dizajnérmi a data scientistami v agilnom tíme</span><span data-l="en">Working with software and test engineers, designers and data scientists in an agile team</span></li>
+          </ul>
+          <div class="tech"><span class="tag">Java 21</span><span class="tag">Spring Boot 3</span><span class="tag">REST</span><span class="tag">Swagger</span><span class="tag">Redis</span><span class="tag">PostgreSQL</span><span class="tag">Oracle</span><span class="tag">Docker</span><span class="tag">Jenkins</span><span class="tag">Azure DevOps</span><span class="tag">AWS</span><span class="tag">Sonar</span></div>
         </div>
 
         <div class="job">
