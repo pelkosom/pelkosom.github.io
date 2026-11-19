@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje.</p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 2)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -120,29 +120,65 @@ function label(tx, rx, ext) {
 
 // ---------- BLE ----------
 function onNotify(e) {
-  rxBuf += new TextDecoder().decode(new Uint8Array(e.target.value.buffer));
+  const v = e.target.value;
+  rxBuf += new TextDecoder().decode(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
   if (rxBuf.includes('>') && waiter) { const w = waiter; waiter = null; w(); }
+}
+function errText(e) {
+  if (e === undefined || e === null) return 'neznáma chyba';
+  if (typeof e === 'string') return e;
+  const parts = [e.name, e.message, e.code !== undefined ? 'kód ' + e.code : ''].filter(Boolean);
+  if (parts.length) return parts.join(': ');
+  try { return JSON.stringify(e); } catch { return String(e); }
+}
+async function getServices(gatt) {
+  try {
+    const all = await gatt.getPrimaryServices();
+    if (all && all.length) return all;
+  } catch (e) { log('getPrimaryServices zlyhalo: ' + errText(e)); }
+  const out = [];
+  for (const u of SERVICES) {
+    try { out.push(await gatt.getPrimaryService(u)); } catch (e) { /* služba nie je */ }
+  }
+  return out;
 }
 async function connect() {
   if (!navigator.bluetooth) { $('nobt').hidden = false; return; }
+  let step = 'výber zariadenia';
   try {
     setStatus('hľadám adaptér …');
-    dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+    try {
+      dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+    } catch (e) {
+      if (e && e.name === 'NotFoundError') throw e;  // používateľ zrušil výber
+      log('requestDevice s plným zoznamom zlyhalo (' + errText(e) + '), skúšam zjednodušene …');
+      dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0xfff0, 0xffe0, 0x18f0] });
+    }
+    log('Zariadenie: ' + (dev.name || '(bez názvu)'));
     dev.addEventListener('gattserverdisconnected', () => { setStatus('odpojené', 'bad'); enable(false); });
+    step = 'pripojenie GATT';
     const gatt = await dev.gatt.connect();
-    const svcs = await gatt.getPrimaryServices();
+    step = 'zoznam služieb';
+    const svcs = await getServices(gatt);
+    log('Služby: ' + (svcs.map(s => s.uuid).join(', ') || 'žiadne'));
     wch = nch = null;
+    step = 'charakteristiky';
     for (const s of svcs) {
-      let w = null, n = null;
-      for (const c of await s.getCharacteristics()) {
-        if (!n && (c.properties.notify || c.properties.indicate)) n = c;
-        if (!w && (c.properties.write || c.properties.writeWithoutResponse)) w = c;
+      let w = null, n = null, cs = [];
+      try { cs = await s.getCharacteristics(); } catch (e) { log(`  ${s.uuid}: ${errText(e)}`); continue; }
+      for (const c of cs) {
+        const p = c.properties || {};
+        log(`  ${s.uuid} / ${c.uuid}: ${['read','write','writeWithoutResponse','notify','indicate'].filter(k => p[k]).join(',')}`);
+        if (!n && (p.notify || p.indicate)) n = c;
+        if (!w && (p.write || p.writeWithoutResponse)) w = c;
       }
       if (w && n) { wch = w; nch = n; break; }
     }
-    if (!wch) throw new Error('Adaptér nemá známu sériovú službu BLE. Pošlite Claudovi jeho názov.');
-    await nch.startNotifications();
+    if (!wch) throw new Error('Adaptér nemá známu sériovú službu BLE. Skopírujte výsledky a pošlite ich Claudovi.');
+    step = 'zapnutie notifikácií';
     nch.addEventListener('characteristicvaluechanged', onNotify);
+    await nch.startNotifications();
+    step = 'inicializácia ELM327';
     setStatus('inicializujem …');
     const r = await init();
     log(`Adaptér: ${r.ver || '?'}`);
@@ -150,14 +186,17 @@ async function connect() {
     else { setStatus('pripojené, ale auto neodpovedá – je zapnuté zapaľovanie?', 'bad'); log(`0100 -> ${r.test.join(' | ')}`); }
     enable(true);
   } catch (e) {
-    setStatus('chyba: ' + e.message, 'bad');
+    setStatus(`chyba (${step}): ${errText(e)}`, 'bad');
+    log(`Chyba pri kroku „${step}“: ${errText(e)}`, 'bad');
   }
 }
 async function send(str) {
   const d = new TextEncoder().encode(str);
   for (let i = 0; i < d.length; i += 20) {
     const ch = d.slice(i, i + 20);
-    if (wch.properties.writeWithoutResponse) await wch.writeValueWithoutResponse(ch);
+    const p = wch.properties || {};
+    if (p.writeWithoutResponse && typeof wch.writeValueWithoutResponse === 'function') await wch.writeValueWithoutResponse(ch);
+    else if (p.write && typeof wch.writeValueWithResponse === 'function') await wch.writeValueWithResponse(ch);
     else await wch.writeValue(ch);
   }
 }
@@ -294,7 +333,7 @@ async function probe([tx, rx, ext], pats, ranges) {
 async function run(fn) {
   if (busy) return;
   busy = true; stopFlag = false; enable(true);
-  try { await fn(); } catch (e) { log('Chyba: ' + e.message, 'bad'); }
+  try { await fn(); } catch (e) { log('Chyba: ' + errText(e), 'bad'); }
   busy = false; enable(true);
   setStatus(stopFlag ? 'zastavené' : 'hotovo – skopírujte výsledky a pošlite ich Claudovi', 'ok');
 }
