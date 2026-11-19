@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 4)</small></p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 5)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -51,7 +51,8 @@
     <label for="ids">ID snímačov na aute (nepovinné, oddeľte medzerou)</label>
     <input id="ids" placeholder="napr. 0A1B2C3D 1234567" autocomplete="off" autocapitalize="characters">
     <label for="did">Rozsahy UDS identifikátorov</label>
-    <input id="did" value="2800-28FF" autocomplete="off" autocapitalize="characters">
+    <input id="did" value="" placeholder="prázdne = preskočiť (rýchlejšie)" autocomplete="off" autocapitalize="characters">
+    <label style="display:flex;gap:8px;align-items:center"><input id="stopFound" type="checkbox" checked style="width:auto"> zastaviť hneď po nájdení ID</label>
     <div class="row">
       <button id="bScan" disabled>Sken jednotiek</button>
       <button id="bAuto" disabled>Sken + čítanie všetkých</button>
@@ -100,7 +101,7 @@ const HEXLINE = /^([0-9A-F]{3})((?: [0-9A-F]{2})+)\s*$/;
 
 const $ = id => document.getElementById(id);
 let dev = null, wch = null, nch = null, rxBuf = '', waiter = null, state = null;
-let stopFlag = false, busy = false;
+let stopFlag = false, busy = false, foundId = false;
 const logLines = [];
 
 function log(text, cls) {
@@ -279,10 +280,10 @@ function patterns() {
 function checkMatch(payload, pats, where) {
   const h = hex(payload, '');
   for (const [raw, cands] of Object.entries(pats))
-    for (const c of cands) if (h.includes(c)) log(`    *** NÁJDENÉ ID ${raw} (hex ${c}) v ${where} ***`, 'hit');
+    for (const c of cands) if (h.includes(c)) { foundId = true; log(`    *** NÁJDENÉ ID ${raw} (hex ${c}) v ${where} ***`, 'hit'); }
 }
 function parseRanges(t) {
-  return t.split(',').map(p => p.trim()).filter(Boolean).map(p => {
+  return (t || '').split(',').map(p => p.trim()).filter(Boolean).map(p => {
     const [a, b] = p.split('-'); return [parseInt(a, 16), parseInt(b || a, 16)];
   });
 }
@@ -290,7 +291,7 @@ function parseRanges(t) {
 // ---------- režimy ----------
 async function scan() {
   const found = [];
-  await cmd('ATST0A');
+  await cmd('ATST08');
   log('Skenujem štandardné adresy 700–7F7 …');
   for (let tx = 0x700; tx < 0x7F8; tx++) {
     if (stopFlag) break;
@@ -307,23 +308,26 @@ async function scan() {
       if (r && (r[0] === 0x7E || r[0] === 0x7F)) { log(`  jednotka: ${label(0x750, 0x758, e)}  odpoveď ${hex(r)}`); found.push([0x750, 0x758, e]); }
     }
   } catch (err) { log('  ' + err.message + ' Preskakujem.'); }
-  await cmd('ATCEA'); state = null; await cmd('ATST19');
+  await cmd('ATCEA'); state = null; await cmd('ATST10');
   log(`Nájdených jednotiek: ${found.length}`);
   return found;
 }
 async function probe([tx, rx, ext], pats, ranges) {
   const name = label(tx, rx, ext);
   log(`\n=== Čítam jednotku ${name} ===`);
-  let hits = 0, unsup = 0;
-  for (let lid = 1; lid < 0x100 && !stopFlag; lid++) {
+  let hits = 0, unsup = 0, silent = 0;
+  const stopNow = () => stopFlag || (foundId && $('stopFound').checked);
+  for (let lid = 1; lid < 0x100 && !stopNow(); lid++) {
     if (lid % 16 === 1) setStatus(`${name}: 21 ${lid.toString(16).toUpperCase()} …`, 'ok');
     const r = await request(tx, rx, [0x21, lid], ext);
+    silent = r ? 0 : silent + 1;
+    if (silent >= 20) { log('  jednotka prestala odpovedať, pokračujem ďalej'); break; }
     if (r && r[0] === 0x61) { hits++; log(`  21 ${lid.toString(16).padStart(2, '0').toUpperCase()} -> ${hex(r)}`); checkMatch(r.slice(2), pats, `${name} 21 ${lid.toString(16).toUpperCase()}`); }
     else if (r && r.length >= 3 && r[0] === 0x7F && r[2] === 0x11 && ++unsup >= 5) { log('  služba 21 nie je podporovaná'); break; }
   }
   for (const [a, b] of ranges) {
     unsup = 0;
-    for (let did = a; did <= b && !stopFlag; did++) {
+    for (let did = a; did <= b && !stopNow(); did++) {
       if (did % 16 === 0) setStatus(`${name}: 22 ${did.toString(16).toUpperCase()} …`, 'ok');
       const r = await request(tx, rx, [0x22, did >> 8, did & 0xFF], ext);
       if (r && r[0] === 0x62) { hits++; log(`  22 ${did.toString(16).padStart(4, '0').toUpperCase()} -> ${hex(r)}`); checkMatch(r.slice(3), pats, `${name} 22 ${did.toString(16).toUpperCase()}`); }
@@ -335,7 +339,7 @@ async function probe([tx, rx, ext], pats, ranges) {
 
 async function run(fn) {
   if (busy) return;
-  busy = true; stopFlag = false; enable(true);
+  busy = true; stopFlag = false; foundId = false; enable(true);
   try { await fn(); } catch (e) { log('Chyba: ' + errText(e), 'bad'); }
   busy = false; enable(true);
   setStatus(stopFlag ? 'zastavené' : 'hotovo – skopírujte výsledky a pošlite ich Claudovi', 'ok');
@@ -350,7 +354,17 @@ $('bConnect').onclick = connect;
 $('bScan').onclick = () => run(scan);
 $('bAuto').onclick = () => run(async () => {
   const pats = patterns(), ranges = parseRanges($('did').value);
-  for (const e of await scan()) { if (stopFlag) break; try { await probe(e, pats, ranges); } catch (err) { log('  ' + err.message); } }
+  foundId = false;
+  const all = await scan();
+  const skip = e => e[2] === null && e[0] >= 0x7E0 && e[0] <= 0x7E7;
+  const known = e => e[2] === null && (e[0] === 0x7A0 || e[0] === 0x7C4);
+  const list = all.filter(e => !skip(e)).sort((a, b) => (known(a) - known(b)) || ((a[2] === null) - (b[2] === null)));
+  if (all.length !== list.length) log('Motor a prevodovku (7E0–7E7) preskakujem – TPMS tam nie je.');
+  for (const e of list) {
+    if (stopFlag || (foundId && $('stopFound').checked)) break;
+    try { await probe(e, pats, ranges); } catch (err) { log('  ' + errText(err)); }
+  }
+  if (foundId) log('ID sa našli – hotovo.', 'hit');
 });
 $('bOne').onclick = () => run(async () => {
   const tx = parseInt($('tx').value, 16);
