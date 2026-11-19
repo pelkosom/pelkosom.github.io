@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 10)</small></p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 11)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -64,9 +64,9 @@
     <button id="bTpms" hidden disabled></button>
     <label>Jedna jednotka (TX / RX / rozšírená adresa, hex)</label>
     <div class="row">
-      <input id="tx" placeholder="TX 750" autocapitalize="characters">
-      <input id="rx" placeholder="RX (TX+8)" autocapitalize="characters">
-      <input id="ext" placeholder="EXT 2A" autocapitalize="characters">
+      <input id="tx" value="7C4" placeholder="TX, napr. 7C4" autocapitalize="characters">
+      <input id="rx" placeholder="RX – prázdne = auto" autocapitalize="characters">
+      <input id="ext" placeholder="EXT – prázdne = žiadna" autocapitalize="characters">
     </div>
     <div class="row">
       <button id="bOne" disabled>Čítať jednotku</button>
@@ -421,10 +421,11 @@ $('bExt').onclick = () => run(async () => {
   if (foundId) log('ID sa našli – hotovo.', 'hit');
 });
 $('bOne').onclick = () => run(async () => {
-  const tx = parseInt($('tx').value, 16);
-  if (isNaN(tx)) throw new Error('Zadajte TX adresu (hex).');
-  const rx = $('rx').value ? parseInt($('rx').value, 16) : tx + 8;
-  const ext = $('ext').value ? parseInt($('ext').value, 16) : null;
+  const clean = id => $(id).value.toUpperCase().replace(/TX|RX|EXT|0X|[^0-9A-F]/g, '');
+  const tx = parseInt(clean('tx'), 16);
+  if (isNaN(tx)) throw new Error(`Zadajte TX adresu (hex), políčko obsahuje: „${$('tx').value}“`);
+  const rx = clean('rx') ? parseInt(clean('rx'), 16) : tx + 8;
+  const ext = clean('ext') ? parseInt(clean('ext'), 16) : null;
   await probe([tx, rx, ext, ext !== null], patterns(), parseRanges($('did').value));
 });
 $('bTpms').onclick = () => run(async () => {
