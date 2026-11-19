@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TPMS čítačka ELM327</title>
+<style>
+  :root { --bg:#f6f5f2; --fg:#1d1d1b; --muted:#6b6a66; --card:#fff; --line:#e3e1db; --acc:#1f6feb; --ok:#1a7f37; --bad:#c62828; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141413; --fg:#ecebe6; --muted:#9b9a94; --card:#1f1f1d; --line:#33332f; --acc:#4c8dff; --ok:#3fb950; --bad:#f85149; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.45 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:640px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:4px 0 2px; }
+  p.sub { margin:0 0 14px; color:var(--muted); font-size:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:8px 0 4px; }
+  input { width:100%; font:inherit; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .row > * { flex:1 1 0; min-width:0; }
+  button { font:inherit; font-weight:600; padding:11px 12px; border-radius:9px; border:1px solid var(--line); background:var(--bg); color:var(--fg); margin-top:10px; }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button:disabled { opacity:.45; }
+  #status { font-size:14px; font-weight:600; }
+  #status.ok { color:var(--ok); } #status.bad { color:var(--bad); }
+  pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; font:12px/1.4 ui-monospace, Menlo, monospace; white-space:pre-wrap; word-break:break-all; max-height:50vh; overflow:auto; margin:10px 0 0; }
+  .hit { color:var(--ok); font-weight:700; }
+  .warn { background:#fff4e5; color:#7a4b00; border-color:#f3d19c; }
+  @media (prefers-color-scheme: dark) { .warn { background:#2e2410; color:#f0c46a; border-color:#5a4520; } }
+  small { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>TPMS čítačka (ELM327 BLE)</h1>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje.</p>
+
+  <div id="nobt" class="card warn" hidden>
+    Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
+  </div>
+
+  <div class="card">
+    <h2>1. Pripojenie</h2>
+    <small>Zapaľovanie zapnuté, motor vypnutý. Adaptér zasunutý v OBD zásuvke.</small>
+    <button id="bConnect" class="primary" style="width:100%">Pripojiť adaptér</button>
+    <div style="margin-top:10px">Stav: <span id="status">nepripojené</span></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Čítanie</h2>
+    <label for="ids">ID snímačov na aute (nepovinné, oddeľte medzerou)</label>
+    <input id="ids" placeholder="napr. 0A1B2C3D 1234567" autocomplete="off" autocapitalize="characters">
+    <label for="did">Rozsahy UDS identifikátorov</label>
+    <input id="did" value="2800-28FF" autocomplete="off" autocapitalize="characters">
+    <div class="row">
+      <button id="bScan" disabled>Sken jednotiek</button>
+      <button id="bAuto" class="primary" disabled>Sken + čítanie všetkých</button>
+    </div>
+    <label>Jedna jednotka (TX / RX / rozšírená adresa, hex)</label>
+    <div class="row">
+      <input id="tx" placeholder="TX 750" autocapitalize="characters">
+      <input id="rx" placeholder="RX (TX+8)" autocapitalize="characters">
+      <input id="ext" placeholder="EXT 2A" autocapitalize="characters">
+    </div>
+    <div class="row">
+      <button id="bOne" disabled>Čítať jednotku</button>
+      <button id="bStop" disabled>Zastaviť</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. Terminál</h2>
+    <small>AT príkazy a čítacie služby (01, 09, 3E, 21, 22). Ostatné sú zablokované.</small>
+    <div class="row">
+      <input id="term" placeholder="napr. ATI alebo 0100" autocapitalize="characters" autocomplete="off">
+      <button id="bSend" disabled style="flex:0 0 auto;margin-top:0">Poslať</button>
+    </div>
+    <label style="display:flex;gap:8px;align-items:center"><input id="verbose" type="checkbox" style="width:auto"> vypisovať celú komunikáciu</label>
+  </div>
+
+  <div class="card">
+    <h2>Výsledky</h2>
+    <div class="row">
+      <button id="bCopy">Kopírovať výsledky</button>
+      <button id="bClear">Vymazať</button>
+    </div>
+    <pre id="log"></pre>
+  </div>
+</main>
+
+<script>
+const SERVICES = [0xfff0, 0xffe0, 0x18f0, 0xae30, 0xfee7,
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '0000fff0-0000-1000-8000-00805f9b34fb'];
+const SAFE = new Set([0x3E, 0x21, 0x22]);
+const TERM_SAFE = new Set([0x01, 0x09, 0x3E, 0x21, 0x22]);
+const HEXLINE = /^([0-9A-F]{3})((?: [0-9A-F]{2})+)\s*$/;
+
+const $ = id => document.getElementById(id);
+let dev = null, wch = null, nch = null, rxBuf = '', waiter = null, state = null;
+let stopFlag = false, busy = false;
+const logLines = [];
+
+function log(text, cls) {
+  logLines.push(text);
+  const el = $('log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = text;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(t, cls) { const s = $('status'); s.textContent = t; s.className = cls || ''; }
+const hex = (arr, sep = ' ') => Array.from(arr, b => b.toString(16).padStart(2, '0').toUpperCase()).join(sep);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function label(tx, rx, ext) {
+  let s = `TX ${tx.toString(16).toUpperCase()} / RX ${rx.toString(16).toUpperCase()}`;
+  if (ext !== null) s += ` / EXT ${ext.toString(16).padStart(2, '0').toUpperCase()}`;
+  return s;
+}
+
+// ---------- BLE ----------
+function onNotify(e) {
+  rxBuf += new TextDecoder().decode(new Uint8Array(e.target.value.buffer));
+  if (rxBuf.includes('>') && waiter) { const w = waiter; waiter = null; w(); }
+}
+async function connect() {
+  if (!navigator.bluetooth) { $('nobt').hidden = false; return; }
+  try {
+    setStatus('hľadám adaptér …');
+    dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+    dev.addEventListener('gattserverdisconnected', () => { setStatus('odpojené', 'bad'); enable(false); });
+    const gatt = await dev.gatt.connect();
+    const svcs = await gatt.getPrimaryServices();
+    wch = nch = null;
+    for (const s of svcs) {
+      let w = null, n = null;
+      for (const c of await s.getCharacteristics()) {
+        if (!n && (c.properties.notify || c.properties.indicate)) n = c;
+        if (!w && (c.properties.write || c.properties.writeWithoutResponse)) w = c;
+      }
+      if (w && n) { wch = w; nch = n; break; }
+    }
+    if (!wch) throw new Error('Adaptér nemá známu sériovú službu BLE. Pošlite Claudovi jeho názov.');
+    await nch.startNotifications();
+    nch.addEventListener('characteristicvaluechanged', onNotify);
+    setStatus('inicializujem …');
+    const r = await init();
+    log(`Adaptér: ${r.ver || '?'}`);
+    if (r.ok) { setStatus(`pripojené (${dev.name || 'adaptér'}), auto odpovedá`, 'ok'); }
+    else { setStatus('pripojené, ale auto neodpovedá – je zapnuté zapaľovanie?', 'bad'); log(`0100 -> ${r.test.join(' | ')}`); }
+    enable(true);
+  } catch (e) {
+    setStatus('chyba: ' + e.message, 'bad');
+  }
+}
+async function send(str) {
+  const d = new TextEncoder().encode(str);
+  for (let i = 0; i < d.length; i += 20) {
+    const ch = d.slice(i, i + 20);
+    if (wch.properties.writeWithoutResponse) await wch.writeValueWithoutResponse(ch);
+    else await wch.writeValue(ch);
+  }
+}
+function cmd(text, timeout = 3000) {
+  return new Promise(async resolve => {
+    let finished = false;
+    rxBuf = '';
+    const done = () => {
+      if (finished) return; finished = true; clearTimeout(t); waiter = null;
+      const echo = text.replace(/ /g, '').toUpperCase();
+      const lines = rxBuf.replace(/>/g, '').split(/[\r\n]+/).map(s => s.trim()).filter(Boolean)
+        .filter(l => l.replace(/ /g, '').toUpperCase() !== echo);
+      if ($('verbose').checked) log(`  >> ${text}  << ${lines.join(' | ')}`);
+      resolve(lines);
+    };
+    const t = setTimeout(done, timeout);
+    waiter = done;
+    try { await send(text + '\r'); } catch (e) { done(); }
+  });
+}
+
+// ---------- ELM327 ----------
+async function init() {
+  await cmd('ATZ', 5000); await sleep(800);
+  for (const c of ['ATE0', 'ATL0', 'ATS1', 'ATH1', 'ATSP6', 'ATCAF1', 'ATST19']) await cmd(c);
+  const ver = (await cmd('ATI')).join(' ');
+  const test = await cmd('0100', 6000);
+  state = null;
+  return { ver, test, ok: test.some(l => HEXLINE.test(l.toUpperCase())) };
+}
+async function setAddr(tx, rx, ext) {
+  const key = `${tx}/${rx}/${ext}`;
+  if (state === key) return;
+  await cmd('ATSH' + tx.toString(16).padStart(3, '0').toUpperCase());
+  await cmd('ATCRA' + rx.toString(16).padStart(3, '0').toUpperCase());
+  if (ext === null) { await cmd('ATCEA'); }
+  else {
+    const r = await cmd('ATCEA' + ext.toString(16).padStart(2, '0').toUpperCase());
+    if (r.some(l => l.includes('?'))) throw new Error('Adaptér nepodporuje ATCEA (rozšírené adresovanie).');
+  }
+  state = key;
+}
+function parseIsotp(lines, rx, ext) {
+  const responses = []; let cur = null, need = 0;
+  for (const l of lines) {
+    const m = HEXLINE.exec(l.toUpperCase());
+    if (!m || parseInt(m[1], 16) !== rx) continue;
+    let b = m[2].trim().split(' ').map(x => parseInt(x, 16));
+    if (ext !== null) { if (!b.length || b[0] !== ext) continue; b = b.slice(1); }
+    if (!b.length) continue;
+    const kind = b[0] >> 4;
+    if (kind === 0) responses.push(b.slice(1, 1 + (b[0] & 0x0F)));
+    else if (kind === 1 && b.length >= 2) { need = ((b[0] & 0x0F) << 8) | b[1]; cur = b.slice(2); }
+    else if (kind === 2 && cur) { cur = cur.concat(b.slice(1)); if (cur.length >= need) { responses.push(cur.slice(0, need)); cur = null; } }
+  }
+  if (cur) responses.push(cur);
+  const fin = responses.filter(r => !(r.length >= 3 && r[0] === 0x7F && r[2] === 0x78));
+  return fin.length ? fin[fin.length - 1] : null;
+}
+async function request(tx, rx, data, ext = null, timeout = 1000) {
+  if (!SAFE.has(data[0])) throw new Error('Zakázaná služba – stránka smie iba čítať.');
+  await setAddr(tx, rx, ext);
+  return parseIsotp(await cmd(hex(data, ''), timeout), rx, ext);
+}
+
+// ---------- hľadanie ID ----------
+function patterns() {
+  const out = {};
+  for (const raw of $('ids').value.trim().split(/[\s,;]+/).filter(Boolean)) {
+    const s = raw.toUpperCase(); const c = new Set();
+    if (/^[0-9A-F]+$/.test(s)) c.add(s.replace(/^0+/, '') || '0');
+    if (/^[0-9]+$/.test(s)) c.add(BigInt(s).toString(16).toUpperCase());
+    out[raw] = [...c].filter(x => x.length >= 4);
+  }
+  return out;
+}
+function checkMatch(payload, pats, where) {
+  const h = hex(payload, '');
+  for (const [raw, cands] of Object.entries(pats))
+    for (const c of cands) if (h.includes(c)) log(`    *** NÁJDENÉ ID ${raw} (hex ${c}) v ${where} ***`, 'hit');
+}
+function parseRanges(t) {
+  return t.split(',').map(p => p.trim()).filter(Boolean).map(p => {
+    const [a, b] = p.split('-'); return [parseInt(a, 16), parseInt(b || a, 16)];
+  });
+}
+
+// ---------- režimy ----------
+async function scan() {
+  const found = [];
+  await cmd('ATST0A');
+  log('Skenujem štandardné adresy 700–7F7 …');
+  for (let tx = 0x700; tx < 0x7F8; tx++) {
+    if (stopFlag) break;
+    if (tx === 0x7DF || (tx >= 0x7E8 && tx <= 0x7EF)) continue;
+    if (tx % 16 === 0) setStatus(`sken ${tx.toString(16).toUpperCase()} …`, 'ok');
+    const r = await request(tx, tx + 8, [0x3E, 0x00]);
+    if (r && (r[0] === 0x7E || r[0] === 0x7F)) { log(`  jednotka: ${label(tx, tx + 8, null)}  odpoveď ${hex(r)}`); found.push([tx, tx + 8, null]); }
+  }
+  log('Skenujem rozšírené adresy 750 + XX …');
+  try {
+    for (let e = 0; e < 0x100 && !stopFlag; e++) {
+      if (e % 16 === 0) setStatus(`sken 750/${e.toString(16).toUpperCase()} …`, 'ok');
+      const r = await request(0x750, 0x758, [0x3E, 0x00], e);
+      if (r && (r[0] === 0x7E || r[0] === 0x7F)) { log(`  jednotka: ${label(0x750, 0x758, e)}  odpoveď ${hex(r)}`); found.push([0x750, 0x758, e]); }
+    }
+  } catch (err) { log('  ' + err.message + ' Preskakujem.'); }
+  await cmd('ATCEA'); state = null; await cmd('ATST19');
+  log(`Nájdených jednotiek: ${found.length}`);
+  return found;
+}
+async function probe([tx, rx, ext], pats, ranges) {
+  const name = label(tx, rx, ext);
+  log(`\n=== Čítam jednotku ${name} ===`);
+  let hits = 0, unsup = 0;
+  for (let lid = 1; lid < 0x100 && !stopFlag; lid++) {
+    if (lid % 16 === 1) setStatus(`${name}: 21 ${lid.toString(16).toUpperCase()} …`, 'ok');
+    const r = await request(tx, rx, [0x21, lid], ext);
+    if (r && r[0] === 0x61) { hits++; log(`  21 ${lid.toString(16).padStart(2, '0').toUpperCase()} -> ${hex(r)}`); checkMatch(r.slice(2), pats, `${name} 21 ${lid.toString(16).toUpperCase()}`); }
+    else if (r && r.length >= 3 && r[0] === 0x7F && r[2] === 0x11 && ++unsup >= 5) { log('  služba 21 nie je podporovaná'); break; }
+  }
+  for (const [a, b] of ranges) {
+    unsup = 0;
+    for (let did = a; did <= b && !stopFlag; did++) {
+      if (did % 16 === 0) setStatus(`${name}: 22 ${did.toString(16).toUpperCase()} …`, 'ok');
+      const r = await request(tx, rx, [0x22, did >> 8, did & 0xFF], ext);
+      if (r && r[0] === 0x62) { hits++; log(`  22 ${did.toString(16).padStart(4, '0').toUpperCase()} -> ${hex(r)}`); checkMatch(r.slice(3), pats, `${name} 22 ${did.toString(16).toUpperCase()}`); }
+      else if (r && r.length >= 3 && r[0] === 0x7F && r[2] === 0x11 && ++unsup >= 5) { log('  služba 22 nie je podporovaná'); break; }
+    }
+  }
+  log(`  odpovede s dátami: ${hits}`);
+}
+
+async function run(fn) {
+  if (busy) return;
+  busy = true; stopFlag = false; enable(true);
+  try { await fn(); } catch (e) { log('Chyba: ' + e.message, 'bad'); }
+  busy = false; enable(true);
+  setStatus(stopFlag ? 'zastavené' : 'hotovo – skopírujte výsledky a pošlite ich Claudovi', 'ok');
+}
+function enable(connected) {
+  const c = connected && dev && dev.gatt.connected;
+  for (const id of ['bScan', 'bAuto', 'bOne', 'bSend']) $(id).disabled = !c || busy;
+  $('bStop').disabled = !busy;
+}
+
+$('bConnect').onclick = connect;
+$('bScan').onclick = () => run(scan);
+$('bAuto').onclick = () => run(async () => {
+  const pats = patterns(), ranges = parseRanges($('did').value);
+  for (const e of await scan()) { if (stopFlag) break; try { await probe(e, pats, ranges); } catch (err) { log('  ' + err.message); } }
+});
+$('bOne').onclick = () => run(async () => {
+  const tx = parseInt($('tx').value, 16);
+  if (isNaN(tx)) throw new Error('Zadajte TX adresu (hex).');
+  const rx = $('rx').value ? parseInt($('rx').value, 16) : tx + 8;
+  const ext = $('ext').value ? parseInt($('ext').value, 16) : null;
+  await probe([tx, rx, ext], patterns(), parseRanges($('did').value));
+});
+$('bStop').onclick = () => { stopFlag = true; };
+$('bSend').onclick = () => run(async () => {
+  const t = $('term').value.trim().toUpperCase();
+  if (!t) return;
+  if (!t.startsWith('AT')) {
+    const first = parseInt(t.replace(/ /g, '').slice(0, 2), 16);
+    if (!TERM_SAFE.has(first)) throw new Error('Tento príkaz je zablokovaný – terminál smie iba čítať.');
+  }
+  state = null;
+  log(`> ${t}`);
+  for (const l of await cmd(t, 4000)) log('  ' + l);
+});
+$('term').addEventListener('keydown', e => { if (e.key === 'Enter' && !$('bSend').disabled) $('bSend').click(); });
+$('bCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText(logLines.join('\n')); $('bCopy').textContent = 'Skopírované ✓'; }
+  catch { $('bCopy').textContent = 'Kopírovanie zlyhalo – označte text ručne'; }
+  setTimeout(() => $('bCopy').textContent = 'Kopírovať výsledky', 2500);
+};
+$('bClear').onclick = () => { logLines.length = 0; $('log').textContent = ''; };
+if (!navigator.bluetooth) $('nobt').hidden = false;
+</script>
+</body>
+</html>
