@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 12)</small></p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 13)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -345,25 +345,60 @@ async function scanExt() {
 }
 async function probe([tx, rx, ext, raw], pats, ranges) {
   extRaw = !!raw; state = null;
-  await cmd(ext !== null ? 'ATST19' : 'ATST10');
+  const slow = ext !== null;                       // jednotky za bránou 750 odpovedajú pomaly
+  await cmd(slow ? 'ATSTFF' : 'ATST19');
+  const tmo = slow ? 4000 : 1500;
   const name = label(tx, rx, ext);
   log(`\n=== Čítam jednotku ${name} ===`);
   let hits = 0, unsup = 0, silent = 0;
   const stopNow = () => stopFlag;  // jednotku s nájdeným ID dočítaj celú
+  const done = new Set();
+  const h2 = n => n.toString(16).padStart(2, '0').toUpperCase();
+  const got = r => {                               // zaznamenaj odpoveď 61 xx (aj oneskorenú)
+    const l = r[1]; if (done.has(l)) return; done.add(l); hits++;
+    log(`  21 ${h2(l)} -> ${hex(r)}`); checkMatch(r.slice(2), pats, `${name} 21 ${h2(l)}`);
+  };
+  const read = async lid => {                      // vráti odpoveď patriacu k danému lid
+    for (let a = 0; a < 3; a++) {
+      const r = await request(tx, rx, [0x21, lid], ext, tmo);
+      if (r && r[0] === 0x61 && r[1] !== lid) { got(r); continue; }   // oneskorená odpoveď inej otázky
+      return r;
+    }
+    return null;
+  };
   const lr = parseRanges($('lid').value)[0] || [1, 0xFF];
-  for (let lid = Math.max(lr[0], 0); lid <= Math.min(lr[1], 0xFF) && !stopNow(); lid++) {
-    if (lid % 16 === 1 || lid === lr[0]) setStatus(`${name}: 21 ${lid.toString(16).toUpperCase()} …`, 'ok');
-    const r = await request(tx, rx, [0x21, lid], ext);
+  // 1) mapa podporovaných ID (21 00, 20, 40 … E0)
+  setStatus(`${name}: čítam mapu podporovaných ID …`, 'ok');
+  let sup = null;
+  for (let m = 0; m <= 0xE0 && !stopNow(); m += 0x20) {
+    const r = await read(m);
+    if (r && r[0] === 0x61 && r[1] === m) {
+      got(r);
+      if (r.length === 6) { sup = sup || new Set(); for (let i = 0; i < 32; i++) if (r[2 + (i >> 3)] & (0x80 >> (i & 7))) sup.add(m + 1 + i); }
+    } else if (r && r[0] === 0x7F && r[2] === 0x11) { log('  služba 21 nie je podporovaná'); sup = new Set(); break; }
+  }
+  let list;
+  if (sup) { list = [...sup].filter(l => l <= 0xFF && l >= lr[0] && l <= lr[1] && !done.has(l)).sort((a, b) => a - b);
+    log(`  mapa: ${list.length} podporovaných ID na čítanie`); }
+  else { list = []; for (let l = lr[0]; l <= Math.min(lr[1], 0xFF); l++) if (!done.has(l)) list.push(l);
+    log('  mapa nedostupná – čítam celý rozsah'); }
+  // 2) samotné údaje
+  for (const lid of list) {
+    if (stopNow()) break;
+    if (done.has(lid)) continue;
+    setStatus(`${name}: 21 ${h2(lid)} …`, 'ok');
+    const r = await read(lid);
     silent = r ? 0 : silent + 1;
-    if (silent >= 20) { log('  jednotka prestala odpovedať, pokračujem ďalej'); break; }
-    if (r && r[0] === 0x61) { hits++; log(`  21 ${lid.toString(16).padStart(2, '0').toUpperCase()} -> ${hex(r)}`); checkMatch(r.slice(2), pats, `${name} 21 ${lid.toString(16).toUpperCase()}`); }
+    if (!sup && silent >= 20) { log('  jednotka prestala odpovedať, pokračujem ďalej'); break; }
+    if (r && r[0] === 0x61) got(r);
     else if (r && r.length >= 3 && r[0] === 0x7F && r[2] === 0x11 && ++unsup >= 5) { log('  služba 21 nie je podporovaná'); break; }
+    else if (sup && !r) log(`  21 ${h2(lid)} -> bez odpovede`);
   }
   for (const [a, b] of ranges) {
     unsup = 0;
     for (let did = a; did <= b && !stopNow(); did++) {
       if (did % 16 === 0) setStatus(`${name}: 22 ${did.toString(16).toUpperCase()} …`, 'ok');
-      const r = await request(tx, rx, [0x22, did >> 8, did & 0xFF], ext);
+      const r = await request(tx, rx, [0x22, did >> 8, did & 0xFF], ext, tmo);
       if (r && r[0] === 0x62) { hits++; log(`  22 ${did.toString(16).padStart(4, '0').toUpperCase()} -> ${hex(r)}`); checkMatch(r.slice(3), pats, `${name} 22 ${did.toString(16).toUpperCase()}`); }
       else if (r && r.length >= 3 && r[0] === 0x7F && r[2] === 0x11 && ++unsup >= 5) { log('  služba 22 nie je podporovaná'); break; }
     }
