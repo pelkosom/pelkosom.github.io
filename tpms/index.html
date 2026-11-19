@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 18)</small></p>
+  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 19)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -500,8 +500,11 @@ async function readIds() {
   return validIds(ids);
 }
 function loadBak() { try { return JSON.parse(localStorage.getItem('tpmsBackup') || 'null'); } catch { return null; } }
-function showBak() { const b = loadBak(); $('bak').textContent = b ? `Záloha (${b.time}): ${show(b.ids)}` : 'Záloha zatiaľ nie je.'; }
-function saveBak(ids) { const b = { ids, time: new Date().toLocaleString('sk') }; try { localStorage.setItem('tpmsBackup', JSON.stringify(b)); } catch {} showBak(); log(`  záloha: ${show(ids)}  (uložená aj v tomto výpise)`); }
+function loadFirst() { try { return JSON.parse(localStorage.getItem('tpmsBackupFirst') || 'null'); } catch { return null; } }
+function showBak() { const b = loadBak(), f = loadFirst();
+  $('bak').textContent = (b ? `Záloha (${b.time}): ${show(b.ids)}` : 'Záloha zatiaľ nie je.') + (f && b && f.ids.join() !== b.ids.join() ? ` · úplne prvá záloha (${f.time}): ${show(f.ids)}` : ''); }
+function saveBak(ids) { const b = { ids, time: new Date().toLocaleString('sk') };
+  try { if (!localStorage.getItem('tpmsBackupFirst')) localStorage.setItem('tpmsBackupFirst', JSON.stringify(b)); localStorage.setItem('tpmsBackup', JSON.stringify(b)); } catch {} showBak(); log(`  záloha: ${show(ids)}  (uložená aj v tomto výpise)`); }
 const rxFrames = lines => lines.map(l => HEXLINE.exec(l.toUpperCase())).filter(m => m && parseInt(m[1], 16) === 0x758)
   .map(m => m[2].trim().split(' ').map(x => parseInt(x, 16))).filter(b => b[0] === 0x2A).map(b => b.slice(1));
 const frame8 = b => { const f = [...b]; while (f.length < 8) f.push(0); return hex(f, ''); };
@@ -559,8 +562,10 @@ async function register(mode) {
     ok = !!final && final[0] === 0x7B;
     log(`  3B 0E -> ${nrcText(final)}`, final && final[0] === 0x7B ? 'hit' : (final ? 'bad' : ''));
     if (final && final[0] === 0x7F) { log('  Jednotka zápis odmietla – nič sa nezmenilo. Pošlite výsledok Claudovi.', 'bad'); }
+  } catch (e) {
+    log('  Chyba počas zápisu: ' + errText(e), 'bad');
   } finally {
-    await cmd('ATSTFF'); await cmd('ATAT1'); await cmd('ATR1');
+    await cmd('ATR1'); await cmd('ATSTFF'); await cmd('ATAT1');
   }
   await sleep(1500);
   let after = null;
@@ -569,13 +574,19 @@ async function register(mode) {
   if (after && after.join() === ids.join() && (ok || mode !== 'same')) log(mode === 'same' ? 'Test OK: jednotka zápis prijala (7B 0E) a ID sú nezmenené ✓' : 'Hotovo: ID sú zapísané a overené spätným čítaním ✓', 'hit');
   else if (after && after.join() === cur.join() && !ok) log('Zápis neprešiel, ID v aute sú nezmenené (bezpečné). Pošlite výsledok Claudovi.', 'bad');
   else if (after && after.join() === cur.join()) log('ID sa nezmenili. Pošlite výsledok Claudovi.', 'bad');
+  else if (after && [...after].sort().join() === [...ids].sort().join()) log('ID sú zapísané, jednotka ich len uložila v inom poradí ✓', 'hit');
   else log('!!! Výsledok sa nedá overiť alebo je iný. Neopakujte zápis, pošlite výpis Claudovi. Záloha je uložená.', 'bad');
-  try { const e = await requestAny(0x750, 0x758, [0x10, 0x81], 0x2A, 4000); log(`  10 81 (späť do normálnej relácie) -> ${nrcText(e)}`); } catch {}
-  extRaw = false; state = null;
 }
-$('bRegTest').onclick = () => run(() => register('same'));
-$('bReg').onclick = () => run(() => register('new'));
-$('bRestore').onclick = () => run(() => register('restore'));
+async function registerSafe(mode) {
+  try { await register(mode); }
+  finally {
+    if (extRaw) { try { const e = await requestAny(0x750, 0x758, [0x10, 0x81], 0x2A, 4000); log(`  10 81 (späť do normálnej relácie) -> ${nrcText(e)}`); } catch {} }
+    extRaw = false; state = null; await cmd('ATCAF1');
+  }
+}
+$('bRegTest').onclick = () => run(() => registerSafe('same'));
+$('bReg').onclick = () => run(() => registerSafe('new'));
+$('bRestore').onclick = () => run(() => registerSafe('restore'));
 showBak();
 $('bMon').onclick = () => run(async () => {
   log('\n=== Odpočúvanie 750–75F (Zastaviť = koniec) ===');
