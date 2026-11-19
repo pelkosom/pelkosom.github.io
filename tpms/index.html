@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 19)</small></p>
+  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 20)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -83,7 +83,7 @@
     <small>Protokol podľa projektu tpms-relearn (Toyota): relácia <code>10 5F</code>, potom jeden zápis <code>3B 0E</code> so všetkými 4 ID naraz. Pred zápisom sa ID prečítajú a uložia ako záloha, po zápise sa prečítajú znova a porovnajú. Iný zápis stránka neposiela. Motor vypnutý, zapaľovanie zapnuté.</small>
     <button id="bRegTest" class="primary" disabled style="width:100%">1. Test – zapíše TIE ISTÉ ID, ktoré už sú v aute</button>
     <label for="newIds" style="display:block;margin-top:10px">Nové ID (presne 4, 7 hex znakov)</label>
-    <input id="newIds" value="" placeholder="napr. 06D9834 06D9100 07FB408 1234ABC" autocomplete="off" autocapitalize="characters">
+    <input id="newIds" value="06D9834 06D9100 07FB408 06D908F" placeholder="napr. 06D9834 06D9100 07FB408 1234ABC" autocomplete="off" autocapitalize="characters">
     <button id="bReg" disabled style="width:100%;margin-top:8px">2. Zapísať nové ID</button>
     <button id="bRestore" disabled style="width:100%;margin-top:8px">Obnoviť zálohu (ID pred posledným zápisom)</button>
     <small id="bak"></small>
