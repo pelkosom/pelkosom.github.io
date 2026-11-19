@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 16)</small></p>
+  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 17)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -81,7 +81,10 @@
   <div class="card">
     <h2>3. Zápis TPMS (750 / 2A)</h2>
     <small>Snímače sú uložené v lokálnych ID 0F, 10, 11, 12 (13 = 5. slot). Zápis je v kóde povolený <b>iba</b> do jednotky 750/2A a <b>iba</b> do slotov 0F–13. Test zapíše vždy <b>presne tú hodnotu, ktorá tam už je</b>, a hneď ju skontroluje. Motor vypnutý, zapaľovanie zapnuté.</small>
-    <button id="bWTest" disabled style="width:100%">Bezpečný test zápisu (iba sloty TPMS, rovnaká hodnota)</button>
+    <button id="bW06" class="primary" disabled style="width:100%">Test 3B 06 – počet snímačov, rovnaká hodnota</button>
+    <button id="bWTest" disabled style="width:100%;margin-top:8px">Bezpečný test zápisu (iba sloty TPMS, rovnaká hodnota)</button>
+    <button id="bMon" disabled style="width:100%;margin-top:8px">Odpočúvať 750–75F (iba počúva, nič neposiela)</button>
+    <small>Odpočúvanie: cez rozdvojku OBD zachytí, čo posiela iný prístroj (pneuservis, Techstream) pri registrácii ID. Zastavíte tlačidlom Zastaviť.</small>
   </div>
 
   <div class="card">
@@ -440,7 +443,7 @@ async function run(fn) {
 }
 function enable(connected) {
   const c = connected && dev && dev.gatt.connected;
-  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bWTest', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
+  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bWTest', 'bW06', 'bMon', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
   $('bStop').disabled = !busy;
 }
 
@@ -471,8 +474,9 @@ async function readSlot(lid) {
 }
 const TPMS_SLOTS = [0x0F, 0x10, 0x11, 0x12, 0x13];
 async function writeSlot(lid, data) {            // jediná cesta k zápisu – pevne obmedzená
-  if (!TPMS_SLOTS.includes(lid)) throw new Error('Zápis mimo slotov TPMS je zablokovaný.');
-  if (data.length < 3 || data.length > 4) throw new Error('Nesprávna dĺžka ID.');
+  if (lid === 0x06) { if (data.length !== 1) throw new Error('Nesprávna dĺžka.'); }   // počet snímačov (overené na Prius)
+  else if (!TPMS_SLOTS.includes(lid)) throw new Error('Zápis mimo slotov TPMS je zablokovaný.');
+  else if (data.length < 3 || data.length > 4) throw new Error('Nesprávna dĺžka ID.');
   return requestAny(0x750, 0x758, [0x3B, lid, ...data], 0x2A, 4000);
 }
 $('bWTest').onclick = () => run(async () => {
@@ -508,6 +512,39 @@ $('bWTest').onclick = () => run(async () => {
   }
   log('Test skončený – pošlite výsledok Claudovi.');
   extRaw = false; state = null;
+});
+$('bW06').onclick = () => run(async () => {
+  extRaw = true; state = null; await cmd('ATSTFF');
+  log('\n=== Test 3B 06 (počet snímačov) 750 / 2A ===');
+  const cur = await readSlot(0x06);
+  if (!cur || cur.length !== 3) { log('21 06 sa nedá prečítať v očakávanom tvare: ' + nrcText(cur), 'bad'); return; }
+  const v = cur[2];
+  log(`  aktuálne 21 06 -> ${hex(cur)}  (počet snímačov ${v >> 5})`);
+  if (!confirm(`Zapísať do 06 tú istú hodnotu ${hex([v])}? Nič sa nezmení.`)) { log('  zrušené'); return; }
+  const w = await writeSlot(0x06, [v]);
+  log(`  3B 06 ${hex([v])} -> ${nrcText(w)}`, w && w[0] === 0x7B ? 'hit' : '');
+  const back = await readSlot(0x06);
+  const same = back && back[2] === v;
+  log(`  kontrola 21 06 -> ${back ? hex(back) : 'bez odpovede'} ${same ? '(nezmenené ✓)' : '!!! ZMENENÉ !!!'}`, same ? '' : 'bad');
+  if (back && !same) { const f = await writeSlot(0x06, [v]); log('  obnova: ' + nrcText(f), 'bad'); }
+  log(w && w[0] === 0x7B ? 'Služba 3B v jednotke funguje – ID teda potrebujú iný režim. Pošlite Claudovi.' : 'Pošlite výsledok Claudovi.', w && w[0] === 0x7B ? 'hit' : '');
+  extRaw = false; state = null;
+});
+$('bMon').onclick = () => run(async () => {
+  log('\n=== Odpočúvanie 750–75F (Zastaviť = koniec) ===');
+  await cmd('ATCAF0'); await cmd('ATCRA'); await cmd('ATCF750'); await cmd('ATCM7F0'); await cmd('ATCSM1');
+  state = null; let n = 0;
+  while (!stopFlag) {
+    rxBuf = '';
+    await send('ATMA\r');
+    for (let t = 0; t < 20 && !stopFlag; t++) await sleep(250);   // 5 s úsek
+    await send(' ');                                              // ukončí ATMA
+    await sleep(400);
+    for (const l of rxBuf.replace(/>/g, '').split(/[\r\n]+/).map(x => x.trim()).filter(x => HEXLINE.test(x.toUpperCase()))) { log('  ' + l); n++; }
+    setStatus(`odpočúvam … zachytených ${n} rámcov`, 'ok');
+  }
+  await cmd('ATAR'); await cmd('ATCAF1');
+  log(`  koniec, zachytených rámcov: ${n}`);
 });
 $('bQ2A').onclick = () => run(() => probe([0x750, 0x758, 0x2A, true], patterns(), parseRanges($('did').value)));
 $('bQ7C6').onclick = () => run(() => probe([0x7C6, 0x7CE, null], patterns(), parseRanges($('did').value)));
