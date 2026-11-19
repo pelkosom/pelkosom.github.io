@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 2)</small></p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 3)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -89,8 +89,10 @@
 </main>
 
 <script>
-const SERVICES = [0xfff0, 0xffe0, 0x18f0, 0xae30, 0xfee7,
-  'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '0000fff0-0000-1000-8000-00805f9b34fb'];
+const U = n => '0000' + n.toString(16).padStart(4, '0') + '-0000-1000-8000-00805f9b34fb';
+const SERVICES = [U(0xfff0), U(0xffe0), U(0x18f0), U(0xae30), U(0xfee7),
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2'];
+const SERVICES_BASIC = [U(0xfff0), U(0xffe0), U(0x18f0)];
 const SAFE = new Set([0x3E, 0x21, 0x22]);
 const TERM_SAFE = new Set([0x01, 0x09, 0x3E, 0x21, 0x22]);
 const HEXLINE = /^([0-9A-F]{3})((?: [0-9A-F]{2})+)\s*$/;
@@ -152,7 +154,7 @@ async function connect() {
     } catch (e) {
       if (e && e.name === 'NotFoundError') throw e;  // používateľ zrušil výber
       log('requestDevice s plným zoznamom zlyhalo (' + errText(e) + '), skúšam zjednodušene …');
-      dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0xfff0, 0xffe0, 0x18f0] });
+      dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES_BASIC });
     }
     log('Zariadenie: ' + (dev.name || '(bez názvu)'));
     dev.addEventListener('gattserverdisconnected', () => { setStatus('odpojené', 'bad'); enable(false); });
