@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 14)</small></p>
+  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 15)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -82,6 +82,7 @@
     <h2>3. Zápis TPMS (750 / 2A)</h2>
     <small>Snímače sú uložené v lokálnych ID 0F, 10, 11, 12 (13 = 5. slot). Zatiaľ len test: prečíta slot 0F a zapíše doň <b>presne tú istú hodnotu</b>. Nič sa nezmení, len zistíme, či jednotka zápis dovolí.</small>
     <button id="bWTest" disabled style="width:100%">Test zápisu (slot 0F, rovnaká hodnota)</button>
+    <button id="bWFind" disabled style="width:100%;margin-top:8px">Hľadať zapisovateľné ID (príkaz bez dát)</button>
   </div>
 
   <div class="card">
@@ -440,7 +441,7 @@ async function run(fn) {
 }
 function enable(connected) {
   const c = connected && dev && dev.gatt.connected;
-  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bWTest', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
+  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bWTest', 'bWFind', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
   $('bStop').disabled = !busy;
 }
 
@@ -483,6 +484,27 @@ $('bWTest').onclick = () => run(async () => {
   log(`  kontrola 21 0F -> ${back ? hex(back) : 'bez odpovede'}${back && hex(back.slice(2)) === hex(val) ? '  (nezmenené ✓)' : ''}`);
   if (w && w[0] === 0x7B) log('Zápis je povolený. Pošlite výsledok Claudovi – ďalší krok sú zimné ID.', 'hit');
   else log('Jednotka zápis odmietla. Pošlite výsledok Claudovi.');
+  extRaw = false; state = null;
+});
+$('bWFind').onclick = () => run(async () => {
+  if (!confirm('Pošle príkaz zápisu 3B bez dát na lokálne ID z rozsahu (predvolene 01–FF). Jednotka by mala iba odpovedať chybou. Pokračovať?')) return;
+  extRaw = true; state = null; await cmd('ATSTFF');
+  const lr = parseRanges($('lid').value)[0] || [1, 0xFF];
+  log(`\n=== Hľadám zapisovateľné ID 750 / 2A (3B xx bez dát), ${lr[0].toString(16)}–${lr[1].toString(16)} ===`);
+  const cnt = {}; let silent = 0;
+  for (let lid = lr[0]; lid <= Math.min(lr[1], 0xFF) && !stopFlag; lid++) {
+    setStatus(`3B ${lid.toString(16).toUpperCase()} …`, 'ok');
+    let r = await requestAny(0x750, 0x758, [0x3B, lid], 0x2A, 4000);
+    if (r && r[0] === 0x61) r = await requestAny(0x750, 0x758, [0x3B, lid], 0x2A, 4000);   // oneskorená odpoveď
+    const k = r ? (r[0] === 0x7F ? 'NRC ' + r[2].toString(16).toUpperCase().padStart(2, '0') : hex(r)) : 'bez odpovede';
+    cnt[k] = (cnt[k] || 0) + 1;
+    silent = r ? 0 : silent + 1;
+    if (!(r && r[0] === 0x7F && (r[2] === 0x12 || r[2] === 0x11)))
+      log(`  3B ${lid.toString(16).padStart(2, '0').toUpperCase()} -> ${nrcText(r)}`, r && r[0] === 0x7F && r[2] === 0x13 ? 'hit' : '');
+    if (r && r[0] === 0x7B) { log('  Pozitívna odpoveď – zastavujem pre istotu.', 'bad'); break; }
+    if (silent >= 10) { log('  jednotka neodpovedá – končím'); break; }
+  }
+  log('  súhrn: ' + Object.entries(cnt).map(([k, v]) => `${k}: ${v}×`).join(', '));
   extRaw = false; state = null;
 });
 $('bQ2A').onclick = () => run(() => probe([0x750, 0x758, 0x2A, true], patterns(), parseRanges($('did').value)));
