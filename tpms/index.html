@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 6)</small></p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 7)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -54,10 +54,10 @@
     <input id="did" value="" placeholder="prázdne = preskočiť (rýchlejšie)" autocomplete="off" autocapitalize="characters">
     <label style="display:flex;gap:8px;align-items:center"><input id="stopFound" type="checkbox" checked style="width:auto"> po nájdení ID dočítať jednotku a skončiť</label>
     <div class="row">
-      <button id="bScan" disabled>Sken jednotiek</button>
-      <button id="bAuto" disabled>Sken + čítanie všetkých</button>
+      <button id="bScan" disabled>Iba zoznam jednotiek</button>
     </div>
-    <button id="bTpms" class="primary" disabled style="width:100%">Rýchly test – iba TPMS</button>
+    <button id="bAuto" class="primary" disabled style="width:100%">▶ Sken + čítanie všetkých</button>
+    <button id="bTpms" hidden disabled></button>
     <label>Jedna jednotka (TX / RX / rozšírená adresa, hex)</label>
     <div class="row">
       <input id="tx" placeholder="TX 750" autocapitalize="characters">
