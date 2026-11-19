@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 5)</small></p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 6)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -52,7 +52,7 @@
     <input id="ids" placeholder="napr. 0A1B2C3D 1234567" autocomplete="off" autocapitalize="characters">
     <label for="did">Rozsahy UDS identifikátorov</label>
     <input id="did" value="" placeholder="prázdne = preskočiť (rýchlejšie)" autocomplete="off" autocapitalize="characters">
-    <label style="display:flex;gap:8px;align-items:center"><input id="stopFound" type="checkbox" checked style="width:auto"> zastaviť hneď po nájdení ID</label>
+    <label style="display:flex;gap:8px;align-items:center"><input id="stopFound" type="checkbox" checked style="width:auto"> po nájdení ID dočítať jednotku a skončiť</label>
     <div class="row">
       <button id="bScan" disabled>Sken jednotiek</button>
       <button id="bAuto" disabled>Sken + čítanie všetkých</button>
@@ -316,7 +316,7 @@ async function probe([tx, rx, ext], pats, ranges) {
   const name = label(tx, rx, ext);
   log(`\n=== Čítam jednotku ${name} ===`);
   let hits = 0, unsup = 0, silent = 0;
-  const stopNow = () => stopFlag || (foundId && $('stopFound').checked);
+  const stopNow = () => stopFlag;  // jednotku s nájdeným ID dočítaj celú
   for (let lid = 1; lid < 0x100 && !stopNow(); lid++) {
     if (lid % 16 === 1) setStatus(`${name}: 21 ${lid.toString(16).toUpperCase()} …`, 'ok');
     const r = await request(tx, rx, [0x21, lid], ext);
