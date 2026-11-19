@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 17)</small></p>
+  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 18)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -79,10 +79,14 @@
   </div>
 
   <div class="card">
-    <h2>3. Zápis TPMS (750 / 2A)</h2>
-    <small>Snímače sú uložené v lokálnych ID 0F, 10, 11, 12 (13 = 5. slot). Zápis je v kóde povolený <b>iba</b> do jednotky 750/2A a <b>iba</b> do slotov 0F–13. Test zapíše vždy <b>presne tú hodnotu, ktorá tam už je</b>, a hneď ju skontroluje. Motor vypnutý, zapaľovanie zapnuté.</small>
-    <button id="bW06" class="primary" disabled style="width:100%">Test 3B 06 – počet snímačov, rovnaká hodnota</button>
-    <button id="bWTest" disabled style="width:100%;margin-top:8px">Bezpečný test zápisu (iba sloty TPMS, rovnaká hodnota)</button>
+    <h2>3. Registrácia ID (750 / 2A)</h2>
+    <small>Protokol podľa projektu tpms-relearn (Toyota): relácia <code>10 5F</code>, potom jeden zápis <code>3B 0E</code> so všetkými 4 ID naraz. Pred zápisom sa ID prečítajú a uložia ako záloha, po zápise sa prečítajú znova a porovnajú. Iný zápis stránka neposiela. Motor vypnutý, zapaľovanie zapnuté.</small>
+    <button id="bRegTest" class="primary" disabled style="width:100%">1. Test – zapíše TIE ISTÉ ID, ktoré už sú v aute</button>
+    <label for="newIds" style="display:block;margin-top:10px">Nové ID (presne 4, 7 hex znakov)</label>
+    <input id="newIds" value="" placeholder="napr. 06D9834 06D9100 07FB408 1234ABC" autocomplete="off" autocapitalize="characters">
+    <button id="bReg" disabled style="width:100%;margin-top:8px">2. Zapísať nové ID</button>
+    <button id="bRestore" disabled style="width:100%;margin-top:8px">Obnoviť zálohu (ID pred posledným zápisom)</button>
+    <small id="bak"></small>
     <button id="bMon" disabled style="width:100%;margin-top:8px">Odpočúvať 750–75F (iba počúva, nič neposiela)</button>
     <small>Odpočúvanie: cez rozdvojku OBD zachytí, čo posiela iný prístroj (pneuservis, Techstream) pri registrácii ID. Zastavíte tlačidlom Zastaviť.</small>
   </div>
@@ -443,7 +447,7 @@ async function run(fn) {
 }
 function enable(connected) {
   const c = connected && dev && dev.gatt.connected;
-  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bWTest', 'bW06', 'bMon', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
+  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bRegTest', 'bReg', 'bRestore', 'bMon', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
   $('bStop').disabled = !busy;
 }
 
@@ -472,64 +476,107 @@ async function readSlot(lid) {
   }
   return null;
 }
-const TPMS_SLOTS = [0x0F, 0x10, 0x11, 0x12, 0x13];
-async function writeSlot(lid, data) {            // jediná cesta k zápisu – pevne obmedzená
-  if (lid === 0x06) { if (data.length !== 1) throw new Error('Nesprávna dĺžka.'); }   // počet snímačov (overené na Prius)
-  else if (!TPMS_SLOTS.includes(lid)) throw new Error('Zápis mimo slotov TPMS je zablokovaný.');
-  else if (data.length < 3 || data.length > 4) throw new Error('Nesprávna dĺžka ID.');
-  return requestAny(0x750, 0x758, [0x3B, lid, ...data], 0x2A, 4000);
+// ---------- registrácia ID (tpms-relearn protokol, overené na Toyota C-HR) ----------
+const TID = s => { s = s.toUpperCase(); if (!/^(?:[0-9A-F]{7}|0[0-9A-F]{7})$/.test(s)) throw new Error(`Neplatné ID „${s}“ – použite 7 hex znakov.`); return s.padStart(8, '0'); };
+function validIds(list) {
+  const ids = list.map(TID);
+  if (ids.length !== 4) throw new Error(`Treba presne 4 ID (zadaných ${ids.length}).`);
+  if (new Set(ids).size !== 4 || ids.some(i => i === '00000000' || i === '0FFFFFFF')) throw new Error('ID musia byť rôzne a nesmú byť prázdne.');
+  return ids;
 }
-$('bWTest').onclick = () => run(async () => {
-  extRaw = true; state = null; await cmd('ATSTFF');
-  log('\n=== Bezpečný test zápisu 750 / 2A ===');
-  const before = {};
-  for (const l of TPMS_SLOTS) {
-    const r = await readSlot(l);
-    if (!r || r.length !== 6) { log(`Slot ${l.toString(16)} sa nedá prečítať: ${nrcText(r)} – končím.`, 'bad'); return; }
-    before[l] = r.slice(2); log(`  slot ${l.toString(16).toUpperCase()}: ${hex(before[l])}`);
+const show = ids => ids.map(i => i.replace(/^0/, '')).join(' ');
+async function readIds() {
+  const c = await readSlot(0x06);
+  log(`  21 06 -> ${nrcText(c)}`);
+  if (!c || c.length < 3) throw new Error('Počet snímačov sa nedá prečítať – nič nezapisujem.');
+  const n = (c[2] & 0xE0) >> 5;
+  if (n !== 4) throw new Error(`Počet snímačov ${n} – podporované sú iba 4, nič nezapisujem.`);
+  const ids = [];
+  for (let i = 0; i < 4; i++) {
+    const r = await readSlot(0x0F + i);
+    if (!r || r.length !== 6) throw new Error(`Slot ${(0x0F + i).toString(16).toUpperCase()} sa nedá prečítať (${nrcText(r)}) – nič nezapisujem.`);
+    ids.push(((((r[2] << 24) | (r[3] << 16) | (r[4] << 8) | r[5]) >>> 0) & 0x0FFFFFFF).toString(16).toUpperCase().padStart(8, '0'));
   }
-  if (!confirm('Zapísať do slotov 0F a 13 tie isté hodnoty, ktoré v nich už sú (rôzne formáty príkazu)? Nič sa nezmení.')) { log('  zrušené'); return; }
-  const tests = [
-    ['0F, 4 bajty', 0x0F, before[0x0F]],
-    ['0F, 3 bajty', 0x0F, before[0x0F].slice(1)],
-    ['13 (prázdny 5. slot), 4 bajty', 0x13, before[0x13]],
-  ];
-  for (const [name, lid, val] of tests) {
-    if (stopFlag) break;
-    if (val.length === 3 && before[lid][0] !== 0) { log(`  ${name}: preskočené (prvý bajt nie je 00)`); continue; }
-    const w = await writeSlot(lid, val);
-    log(`  ${name}: 3B ${lid.toString(16).toUpperCase().padStart(2, '0')} ${hex(val)} -> ${nrcText(w)}`, w && w[0] === 0x7B ? 'hit' : '');
-    const back = await readSlot(lid);
-    const same = back && hex(back.slice(2)) === hex(before[lid]);
-    log(`    kontrola: ${back ? hex(back.slice(2)) : 'bez odpovede'} ${same ? '(nezmenené ✓)' : '!!! ZMENENÉ !!!'}`, same ? '' : 'bad');
-    if (back && !same) {
-      log('    Obnovujem pôvodnú hodnotu …', 'bad');
-      const fix = await writeSlot(lid, before[lid]); const chk = await readSlot(lid);
-      log(`    obnova: ${nrcText(fix)}, slot teraz ${chk ? hex(chk.slice(2)) : '?'}`, 'bad');
-      break;
+  return validIds(ids);
+}
+function loadBak() { try { return JSON.parse(localStorage.getItem('tpmsBackup') || 'null'); } catch { return null; } }
+function showBak() { const b = loadBak(); $('bak').textContent = b ? `Záloha (${b.time}): ${show(b.ids)}` : 'Záloha zatiaľ nie je.'; }
+function saveBak(ids) { const b = { ids, time: new Date().toLocaleString('sk') }; try { localStorage.setItem('tpmsBackup', JSON.stringify(b)); } catch {} showBak(); log(`  záloha: ${show(ids)}  (uložená aj v tomto výpise)`); }
+const rxFrames = lines => lines.map(l => HEXLINE.exec(l.toUpperCase())).filter(m => m && parseInt(m[1], 16) === 0x758)
+  .map(m => m[2].trim().split(' ').map(x => parseInt(x, 16))).filter(b => b[0] === 0x2A).map(b => b.slice(1));
+const frame8 = b => { const f = [...b]; while (f.length < 8) f.push(0); return hex(f, ''); };
+async function sendLong(payload) {                 // ISO-TP viac rámcov, riadenie toku v oboch smeroch
+  const frs = [[0x2A, 0x10 | (payload.length >> 8), payload.length & 255, ...payload.slice(0, 5)]];
+  for (let i = 5, sn = 1; i < payload.length; i += 6, sn++) frs.push([0x2A, 0x20 | (sn & 15), ...payload.slice(i, i + 6)]);
+  let lines = await cmd(frame8(frs[0]), 4000);
+  let fc = rxFrames(lines).find(b => b[0] >> 4 === 3);
+  if (!fc || fc[0] !== 0x30) throw new Error('Jednotka nepovolila pokračovať (flow control) – správa sa nedokončila, nič sa nezapísalo.');
+  let bs = fc[1], stmin = fc[2] <= 0x7F ? fc[2] : 1, inBlock = 0;
+  for (let i = 1; i < frs.length; i++) {
+    const last = i === frs.length - 1; inBlock++;
+    const needFc = !last && bs !== 0 && inBlock === bs;
+    await sleep(stmin);
+    if (!last && !needFc) { await cmd('ATR0'); await cmd(frame8(frs[i]), 1500); await cmd('ATR1'); continue; }
+    lines = await cmd(frame8(frs[i]), 4000);
+    if (needFc) {
+      fc = rxFrames(lines).find(b => b[0] >> 4 === 3);
+      if (!fc || fc[0] !== 0x30) throw new Error('Prenos prerušený uprostred – jednotka neúplnú správu zahodí, nič sa nezapísalo.');
+      bs = fc[1]; inBlock = 0;
     }
-    if (w && w[0] === 0x7B) { log(`Zápis funguje formátom „${name}“. Pošlite výsledok Claudovi.`, 'hit'); break; }
   }
-  log('Test skončený – pošlite výsledok Claudovi.');
-  extRaw = false; state = null;
-});
-$('bW06').onclick = () => run(async () => {
+  return { final: parseIsotp(lines, 0x758, 0x2A), pending: rxFrames(lines).some(b => b[0] < 8 && b[1] === 0x7F && b[3] === 0x78) };
+}
+async function listen(ms) {                        // iba počúva (ATMA), nič neposiela
+  rxBuf = ''; await send('ATMA\r'); await sleep(ms); await send(' '); await sleep(400);
+  const lines = rxBuf.replace(/>/g, '').split(/[\r\n]+/).map(x => x.trim()).filter(Boolean);
+  return parseIsotp(lines, 0x758, 0x2A);
+}
+async function register(mode) {
   extRaw = true; state = null; await cmd('ATSTFF');
-  log('\n=== Test 3B 06 (počet snímačov) 750 / 2A ===');
-  const cur = await readSlot(0x06);
-  if (!cur || cur.length !== 3) { log('21 06 sa nedá prečítať v očakávanom tvare: ' + nrcText(cur), 'bad'); return; }
-  const v = cur[2];
-  log(`  aktuálne 21 06 -> ${hex(cur)}  (počet snímačov ${v >> 5})`);
-  if (!confirm(`Zapísať do 06 tú istú hodnotu ${hex([v])}? Nič sa nezmení.`)) { log('  zrušené'); return; }
-  const w = await writeSlot(0x06, [v]);
-  log(`  3B 06 ${hex([v])} -> ${nrcText(w)}`, w && w[0] === 0x7B ? 'hit' : '');
-  const back = await readSlot(0x06);
-  const same = back && back[2] === v;
-  log(`  kontrola 21 06 -> ${back ? hex(back) : 'bez odpovede'} ${same ? '(nezmenené ✓)' : '!!! ZMENENÉ !!!'}`, same ? '' : 'bad');
-  if (back && !same) { const f = await writeSlot(0x06, [v]); log('  obnova: ' + nrcText(f), 'bad'); }
-  log(w && w[0] === 0x7B ? 'Služba 3B v jednotke funguje – ID teda potrebujú iný režim. Pošlite Claudovi.' : 'Pošlite výsledok Claudovi.', w && w[0] === 0x7B ? 'hit' : '');
+  log(`\n=== ${mode === 'same' ? 'Test registrácie (tie isté ID)' : mode === 'restore' ? 'Obnova zálohy' : 'Zápis nových ID'} – 750 / 2A ===`);
+  let target = null, ok = false;
+  if (mode === 'new') target = validIds($('newIds').value.trim().split(/[\s,;]+/).filter(Boolean));
+  if (mode === 'restore') { const b = loadBak(); if (!b) throw new Error('Záloha neexistuje.'); target = validIds(b.ids); }
+  const cur = await readIds();
+  log(`  aktuálne ID v aute: ${show(cur)}`);
+  const ids = mode === 'same' ? cur : target;
+  if (mode !== 'same' && ids.join() === cur.join()) { log('  V aute už sú presne tieto ID – nič nezapisujem.', 'hit'); return; }
+  if (mode !== 'restore') saveBak(cur);
+  const payload = [0x3B, 0x0E, 0x00, 0x04];
+  for (const id of ids) payload.push(0, 0, ...id.match(/../g).map(x => parseInt(x, 16)));
+  payload.push(0, 0, 0x0F, 0xFF, 0xFF, 0xFF);
+  const msg = mode === 'same' ? `Zapísať do jednotky TPMS tie isté ID, ktoré tam už sú?\n\n${show(ids)}\n\nNič sa nezmení – overí sa iba, či zápis funguje.`
+    : `Zapísať do jednotky TPMS tieto ID?\n\nTeraz: ${show(cur)}\nNové: ${show(ids)}`;
+  if (!confirm(msg)) { log('  zrušené'); return; }
+  try {
+    await cmd('ATAT0'); await cmd('ATAL'); await cmd('ATST64');
+    const s = await requestAny(0x750, 0x758, [0x10, 0x5F], 0x2A, 4000);
+    log(`  10 5F -> ${nrcText(s)}`);
+    if (!s || s[0] !== 0x50) { log('  Jednotka neprijala diagnostickú reláciu – nič som nezapísal.', 'bad'); return; }
+    log(`  posielam: ${hex(payload)}`);
+    let { final, pending } = await sendLong(payload);
+    if (!final) { log(pending ? '  jednotka spracúva (78), čakám na výsledok …' : '  odpoveď zatiaľ neprišla, počúvam …'); final = await listen(5000); }
+    ok = !!final && final[0] === 0x7B;
+    log(`  3B 0E -> ${nrcText(final)}`, final && final[0] === 0x7B ? 'hit' : (final ? 'bad' : ''));
+    if (final && final[0] === 0x7F) { log('  Jednotka zápis odmietla – nič sa nezmenilo. Pošlite výsledok Claudovi.', 'bad'); }
+  } finally {
+    await cmd('ATSTFF'); await cmd('ATAT1'); await cmd('ATR1');
+  }
+  await sleep(1500);
+  let after = null;
+  try { after = await readIds(); } catch (e) { log('  kontrola: ' + errText(e), 'bad'); }
+  if (after) log(`  kontrola – ID v aute teraz: ${show(after)}`);
+  if (after && after.join() === ids.join() && (ok || mode !== 'same')) log(mode === 'same' ? 'Test OK: jednotka zápis prijala (7B 0E) a ID sú nezmenené ✓' : 'Hotovo: ID sú zapísané a overené spätným čítaním ✓', 'hit');
+  else if (after && after.join() === cur.join() && !ok) log('Zápis neprešiel, ID v aute sú nezmenené (bezpečné). Pošlite výsledok Claudovi.', 'bad');
+  else if (after && after.join() === cur.join()) log('ID sa nezmenili. Pošlite výsledok Claudovi.', 'bad');
+  else log('!!! Výsledok sa nedá overiť alebo je iný. Neopakujte zápis, pošlite výpis Claudovi. Záloha je uložená.', 'bad');
+  try { const e = await requestAny(0x750, 0x758, [0x10, 0x81], 0x2A, 4000); log(`  10 81 (späť do normálnej relácie) -> ${nrcText(e)}`); } catch {}
   extRaw = false; state = null;
-});
+}
+$('bRegTest').onclick = () => run(() => register('same'));
+$('bReg').onclick = () => run(() => register('new'));
+$('bRestore').onclick = () => run(() => register('restore'));
+showBak();
 $('bMon').onclick = () => run(async () => {
   log('\n=== Odpočúvanie 750–75F (Zastaviť = koniec) ===');
   await cmd('ATCAF0'); await cmd('ATCRA'); await cmd('ATCF750'); await cmd('ATCM7F0'); await cmd('ATCSM1');
