@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 7)</small></p>
+  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 8)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -56,7 +56,8 @@
     <div class="row">
       <button id="bScan" disabled>Iba zoznam jednotiek</button>
     </div>
-    <button id="bAuto" class="primary" disabled style="width:100%">▶ Sken + čítanie všetkých</button>
+    <button id="bExt" class="primary" disabled style="width:100%">▶ Hľadať TPMS (rozšírené adresy 750)</button>
+    <button id="bAuto" disabled style="width:100%;margin-top:8px">Sken + čítanie všetkých (pomalé)</button>
     <button id="bTpms" hidden disabled></button>
     <label>Jedna jednotka (TX / RX / rozšírená adresa, hex)</label>
     <div class="row">
@@ -101,7 +102,7 @@ const HEXLINE = /^([0-9A-F]{3})((?: [0-9A-F]{2})+)\s*$/;
 
 const $ = id => document.getElementById(id);
 let dev = null, wch = null, nch = null, rxBuf = '', waiter = null, state = null;
-let stopFlag = false, busy = false, foundId = false;
+let stopFlag = false, busy = false, foundId = false, extRaw = false;
 const logLines = [];
 
 function log(text, cls) {
@@ -232,11 +233,13 @@ async function init() {
   return { ver, test, ok: test.some(l => HEXLINE.test(l.toUpperCase())) };
 }
 async function setAddr(tx, rx, ext) {
-  const key = `${tx}/${rx}/${ext}`;
+  const raw = ext !== null && extRaw;
+  const key = `${tx}/${rx}/${ext}/${raw}`;
   if (state === key) return;
+  await cmd(raw ? 'ATCAF0' : 'ATCAF1');
   await cmd('ATSH' + tx.toString(16).padStart(3, '0').toUpperCase());
   await cmd('ATCRA' + rx.toString(16).padStart(3, '0').toUpperCase());
-  if (ext === null) { await cmd('ATCEA'); }
+  if (ext === null || raw) { await cmd('ATCEA'); }
   else {
     const r = await cmd('ATCEA' + ext.toString(16).padStart(2, '0').toUpperCase());
     if (r.some(l => l.includes('?'))) throw new Error('Adaptér nepodporuje ATCEA (rozšírené adresovanie).');
@@ -263,7 +266,14 @@ function parseIsotp(lines, rx, ext) {
 async function request(tx, rx, data, ext = null, timeout = 1000) {
   if (!SAFE.has(data[0])) throw new Error('Zakázaná služba – stránka smie iba čítať.');
   await setAddr(tx, rx, ext);
-  return parseIsotp(await cmd(hex(data, ''), timeout), rx, ext);
+  if (ext === null || !extRaw) return parseIsotp(await cmd(hex(data, ''), timeout), rx, ext);
+  // ručné rozšírené adresovanie (ATCAF0): [adresa, dĺžka, dáta…] doplnené na 8 bajtov
+  const fr = [ext, data.length, ...data]; while (fr.length < 8) fr.push(0);
+  let lines = await cmd(hex(fr, ''), timeout);
+  const isFF = l => { const m = HEXLINE.exec(l.toUpperCase()); if (!m || parseInt(m[1], 16) !== rx) return false;
+    const b = m[2].trim().split(' ').map(x => parseInt(x, 16)); return b[0] === ext && (b[1] >> 4) === 1; };
+  if (lines.some(isFF)) lines = lines.concat(await cmd(hex([ext, 0x30, 0, 0, 0, 0, 0, 0], ''), timeout));
+  return parseIsotp(lines, rx, ext);
 }
 
 // ---------- hľadanie ID ----------
@@ -291,7 +301,7 @@ function parseRanges(t) {
 // ---------- režimy ----------
 async function scan() {
   const found = [];
-  await cmd('ATST08');
+  await cmd('ATST10');
   log('Skenujem štandardné adresy 700–7F7 …');
   for (let tx = 0x700; tx < 0x7F8; tx++) {
     if (stopFlag) break;
@@ -300,19 +310,33 @@ async function scan() {
     const r = await request(tx, tx + 8, [0x3E, 0x00]);
     if (r && (r[0] === 0x7E || r[0] === 0x7F)) { log(`  jednotka: ${label(tx, tx + 8, null)}  odpoveď ${hex(r)}`); found.push([tx, tx + 8, null]); }
   }
-  log('Skenujem rozšírené adresy 750 + XX …');
-  try {
-    for (let e = 0; e < 0x100 && !stopFlag; e++) {
-      if (e % 16 === 0) setStatus(`sken 750/${e.toString(16).toUpperCase()} …`, 'ok');
-      const r = await request(0x750, 0x758, [0x3E, 0x00], e);
-      if (r && (r[0] === 0x7E || r[0] === 0x7F)) { log(`  jednotka: ${label(0x750, 0x758, e)}  odpoveď ${hex(r)}`); found.push([0x750, 0x758, e]); }
-    }
-  } catch (err) { log('  ' + err.message + ' Preskakujem.'); }
-  await cmd('ATCEA'); state = null; await cmd('ATST10');
+  found.push(...await scanExt());
   log(`Nájdených jednotiek: ${found.length}`);
   return found;
 }
-async function probe([tx, rx, ext], pats, ranges) {
+async function scanExt() {
+  const found = [];
+  await cmd('ATST19');
+  for (const raw of [false, true]) {
+    if (stopFlag || found.length) break;
+    extRaw = raw; state = null;
+    log(raw ? 'Skenujem rozšírené adresy 750 + XX – ručný režim (ATCAF0) …' : 'Skenujem rozšírené adresy 750 + XX (ATCEA) …');
+    try {
+      for (let e = 0; e < 0x100 && !stopFlag; e++) {
+        if (e % 16 === 0) setStatus(`sken 750/${e.toString(16).toUpperCase()}${raw ? ' (ručne)' : ''} …`, 'ok');
+        const r = await request(0x750, 0x758, [0x3E, 0x00], e);
+        if (r && (r[0] === 0x7E || r[0] === 0x7F)) { log(`  jednotka: ${label(0x750, 0x758, e)}  odpoveď ${hex(r)}`); found.push([0x750, 0x758, e, raw]); }
+      }
+    } catch (err) { log('  ' + errText(err) + ' Skúšam ručný režim.'); }
+    if (!found.length) log('  žiadna odpoveď');
+  }
+  extRaw = false; state = null;
+  await cmd('ATCAF1'); await cmd('ATCEA');
+  return found;
+}
+async function probe([tx, rx, ext, raw], pats, ranges) {
+  extRaw = !!raw; state = null;
+  await cmd(ext !== null ? 'ATST19' : 'ATST10');
   const name = label(tx, rx, ext);
   log(`\n=== Čítam jednotku ${name} ===`);
   let hits = 0, unsup = 0, silent = 0;
@@ -335,6 +359,7 @@ async function probe([tx, rx, ext], pats, ranges) {
     }
   }
   log(`  odpovede s dátami: ${hits}`);
+  extRaw = false; state = null;
 }
 
 async function run(fn) {
@@ -346,7 +371,7 @@ async function run(fn) {
 }
 function enable(connected) {
   const c = connected && dev && dev.gatt.connected;
-  for (const id of ['bScan', 'bAuto', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
+  for (const id of ['bScan', 'bAuto', 'bExt', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
   $('bStop').disabled = !busy;
 }
 
@@ -360,6 +385,17 @@ $('bAuto').onclick = () => run(async () => {
   const known = e => e[2] === null && (e[0] === 0x7A0 || e[0] === 0x7C4);
   const list = all.filter(e => !skip(e)).sort((a, b) => (known(a) - known(b)) || ((a[2] === null) - (b[2] === null)));
   if (all.length !== list.length) log('Motor a prevodovku (7E0–7E7) preskakujem – TPMS tam nie je.');
+  for (const e of list) {
+    if (stopFlag || (foundId && $('stopFound').checked)) break;
+    try { await probe(e, pats, ranges); } catch (err) { log('  ' + errText(err)); }
+  }
+  if (foundId) log('ID sa našli – hotovo.', 'hit');
+});
+$('bExt').onclick = () => run(async () => {
+  const pats = patterns(), ranges = parseRanges($('did').value);
+  const list = await scanExt();
+  log(`Nájdených jednotiek na 750: ${list.length}`);
+  if (!list.length) log('Na rozšírených adresách nič neodpovedá – pošlite výsledky Claudovi.');
   for (const e of list) {
     if (stopFlag || (foundId && $('stopFound').checked)) break;
     try { await probe(e, pats, ranges); } catch (err) { log('  ' + errText(err)); }
