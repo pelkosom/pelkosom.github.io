@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Iba číta údaje z riadiacich jednotiek. Do auta nič nezapisuje. <small>(verzia 13)</small></p>
+  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 14)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -79,7 +79,13 @@
   </div>
 
   <div class="card">
-    <h2>3. Terminál</h2>
+    <h2>3. Zápis TPMS (750 / 2A)</h2>
+    <small>Snímače sú uložené v lokálnych ID 0F, 10, 11, 12 (13 = 5. slot). Zatiaľ len test: prečíta slot 0F a zapíše doň <b>presne tú istú hodnotu</b>. Nič sa nezmení, len zistíme, či jednotka zápis dovolí.</small>
+    <button id="bWTest" disabled style="width:100%">Test zápisu (slot 0F, rovnaká hodnota)</button>
+  </div>
+
+  <div class="card">
+    <h2>4. Terminál</h2>
     <small>AT príkazy a čítacie služby (01, 09, 3E, 21, 22). Ostatné sú zablokované.</small>
     <div class="row">
       <input id="term" placeholder="napr. ATI alebo 0100" autocapitalize="characters" autocomplete="off">
@@ -159,18 +165,33 @@ async function connect() {
   let step = 'výber zariadenia';
   try {
     setStatus('hľadám adaptér …');
-    try {
-      dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
-    } catch (e) {
-      if (e && e.name === 'NotFoundError') throw e;  // používateľ zrušil výber
-      log('requestDevice s plným zoznamom zlyhalo (' + errText(e) + '), skúšam zjednodušene …');
-      dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES_BASIC });
+    if (!dev && navigator.bluetooth.getDevices) {   // už povolený adaptér – bez výberu
+      try { const ds = await navigator.bluetooth.getDevices(); dev = ds.find(d => /OBD|ELM|V-?LINK/i.test(d.name || '')) || (ds.length === 1 ? ds[0] : null); }
+      catch (e) { /* getDevices nie je podporené */ }
+    }
+    let gatt = null;
+    if (dev) {
+      step = 'opätovné pripojenie';
+      try { gatt = await dev.gatt.connect(); log('Znova pripojené k ' + (dev.name || 'adaptéru') + ' (bez výberu)'); }
+      catch (e) { log('Opätovné pripojenie zlyhalo (' + errText(e) + '), otváram výber …'); dev = null; }
+    }
+    if (!dev) {
+      step = 'výber zariadenia';
+      try {
+        dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+      } catch (e) {
+        if (e && e.name === 'NotFoundError') throw e;  // používateľ zrušil výber
+        log('requestDevice s plným zoznamom zlyhalo (' + errText(e) + '), skúšam zjednodušene …');
+        dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES_BASIC });
+      }
+      step = 'pripojenie GATT';
+      gatt = await dev.gatt.connect();
     }
     log('Zariadenie: ' + (dev.name || '(bez názvu)'));
-    dev.addEventListener('gattserverdisconnected', () => { setStatus('odpojené', 'bad'); enable(false); });
-    step = 'pripojenie GATT';
-    const gatt = await dev.gatt.connect();
+    if (!dev.__tpmsL) { dev.__tpmsL = true; dev.addEventListener('gattserverdisconnected', () => { setStatus('odpojené – ťuknite na Pripojiť (bez výberu)', 'bad'); enable(false); }); }
+    if (nch) { try { nch.removeEventListener('characteristicvaluechanged', onNotify); } catch (e) {} }
     step = 'zoznam služieb';
+    state = null;
     const svcs = await getServices(gatt);
     log('Služby: ' + (svcs.map(s => s.uuid).join(', ') || 'žiadne'));
     wch = nch = null;
@@ -272,6 +293,9 @@ function parseIsotp(lines, rx, ext) {
 }
 async function request(tx, rx, data, ext = null, timeout = 1000) {
   if (!SAFE.has(data[0])) throw new Error('Zakázaná služba – stránka smie iba čítať.');
+  return requestAny(tx, rx, data, ext, timeout);
+}
+async function requestAny(tx, rx, data, ext, timeout) {
   await setAddr(tx, rx, ext);
   if (ext === null || !extRaw) return parseIsotp(await cmd(hex(data, ''), timeout), rx, ext);
   // ručné rozšírené adresovanie (ATCAF0): [adresa, dĺžka, dáta…] doplnené na 8 bajtov
@@ -416,7 +440,7 @@ async function run(fn) {
 }
 function enable(connected) {
   const c = connected && dev && dev.gatt.connected;
-  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
+  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bWTest', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
   $('bStop').disabled = !busy;
 }
 
@@ -435,6 +459,31 @@ $('bAuto').onclick = () => run(async () => {
     try { await probe(e, pats, ranges); } catch (err) { log('  ' + errText(err)); }
   }
   if (foundId) log('ID sa našli – hotovo.', 'hit');
+});
+const NRC = { 0x10: 'všeobecné odmietnutie', 0x11: 'služba nie je podporovaná', 0x12: 'nepodporovaný formát/podfunkcia', 0x13: 'nesprávna dĺžka', 0x21: 'jednotka je zaneprázdnená', 0x22: 'nesplnené podmienky (napr. motor beží / zlý režim)', 0x31: 'mimo rozsahu', 0x33: 'treba bezpečnostné odomknutie', 0x72: 'chyba zápisu do pamäte', 0x7E: 'nie v tomto režime', 0x7F: 'služba nie je v aktuálnej relácii' };
+const nrcText = r => r && r[0] === 0x7F ? `${hex(r)} = ${NRC[r[2]] || 'neznámy kód'}` : (r ? hex(r) : 'bez odpovede');
+async function readSlot(lid) {
+  for (let a = 0; a < 3; a++) {
+    const r = await request(0x750, 0x758, [0x21, lid], 0x2A, 4000);
+    if (r && r[0] === 0x61 && r[1] === lid) return r;
+  }
+  return null;
+}
+$('bWTest').onclick = () => run(async () => {
+  extRaw = true; state = null; await cmd('ATSTFF');
+  log('\n=== Test zápisu 750 / 2A, slot 0F ===');
+  const cur = await readSlot(0x0F);
+  if (!cur || cur.length !== 6) { log('Nepodarilo sa prečítať slot 0F: ' + nrcText(cur), 'bad'); return; }
+  const val = cur.slice(2);
+  log(`  aktuálne 21 0F -> ${hex(cur)}  (ID ${hex(val, '').replace(/^0+/, '')})`);
+  if (!confirm(`Zapísať do slotu 0F tú istú hodnotu ${hex(val)}? Nič sa nezmení.`)) { log('  zrušené'); return; }
+  const w = await requestAny(0x750, 0x758, [0x3B, 0x0F, ...val], 0x2A, 4000);
+  log(`  3B 0F ${hex(val)} -> ${nrcText(w)}`, w && w[0] === 0x7B ? 'hit' : 'bad');
+  const back = await readSlot(0x0F);
+  log(`  kontrola 21 0F -> ${back ? hex(back) : 'bez odpovede'}${back && hex(back.slice(2)) === hex(val) ? '  (nezmenené ✓)' : ''}`);
+  if (w && w[0] === 0x7B) log('Zápis je povolený. Pošlite výsledok Claudovi – ďalší krok sú zimné ID.', 'hit');
+  else log('Jednotka zápis odmietla. Pošlite výsledok Claudovi.');
+  extRaw = false; state = null;
 });
 $('bQ2A').onclick = () => run(() => probe([0x750, 0x758, 0x2A, true], patterns(), parseRanges($('did').value)));
 $('bQ7C6').onclick = () => run(() => probe([0x7C6, 0x7CE, null], patterns(), parseRanges($('did').value)));
@@ -506,6 +555,9 @@ $('bCopy').onclick = async () => {
 };
 $('bClear').onclick = () => { logLines.length = 0; $('log').textContent = ''; };
 if (!navigator.bluetooth) $('nobt').hidden = false;
+else if (navigator.bluetooth.getDevices) navigator.bluetooth.getDevices().then(ds => {
+  if (ds && ds.some(d => /OBD|ELM|V-?LINK/i.test(d.name || '')) || (ds && ds.length === 1)) { log('Nájdený povolený adaptér – pripájam automaticky …'); connect(); }
+}).catch(() => {});
 </script>
 </body>
 </html>
