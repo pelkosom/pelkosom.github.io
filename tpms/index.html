@@ -28,12 +28,19 @@
   .warn { background:#fff4e5; color:#7a4b00; border-color:#f3d19c; }
   @media (prefers-color-scheme: dark) { .warn { background:#2e2410; color:#f0c46a; border-color:#5a4520; } }
   small { color:var(--muted); }
+  .tires { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+  .tire { border:1px solid var(--line); border-radius:10px; padding:10px; text-align:center; background:var(--bg); }
+  .tire .pos { font-size:13px; color:var(--muted); }
+  .tire .p { font-size:30px; font-weight:700; line-height:1.15; }
+  .tire .t { font-size:15px; }
+  .tire .raw { font:11px ui-monospace, Menlo, monospace; color:var(--muted); }
+  .tire.nodata .p { font-size:18px; color:var(--muted); padding:7px 0; }
 </style>
 </head>
 <body>
 <main>
   <h1>TPMS čítačka (ELM327 BLE)</h1>
-  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 20)</small></p>
+  <p class="sub">Číta údaje z riadiacich jednotiek. Zapisuje iba tlačidlo v časti 3, a to až po potvrdení. <small>(verzia 21)</small></p>
 
   <div id="nobt" class="card warn" hidden>
     Tento prehliadač nepodporuje Web Bluetooth. Na iPhone otvorte stránku v aplikácii <b>Bluefy</b> (zadarmo v App Store).
@@ -44,6 +51,15 @@
     <small>Zapaľovanie zapnuté, motor vypnutý. Adaptér zasunutý v OBD zásuvke.</small>
     <button id="bConnect" class="primary" style="width:100%">Pripojiť adaptér</button>
     <div style="margin-top:10px">Stav: <span id="status">nepripojené</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Tlaky pneumatík</h2>
+    <small>Číta iba hodnoty z jednotky TPMS (750 / 2A). Po zapnutí zapaľovania ich jednotka často nemá – prejdite sa rýchlosťou aspoň 25 km/h, kým snímače začnú vysielať.</small>
+    <button id="bTires" class="primary" disabled style="width:100%">Načítať tlaky</button>
+    <label style="display:flex;gap:8px;align-items:center"><input id="tireLoop" type="checkbox" style="width:auto"> obnovovať každých 5 s (vypnete odškrtnutím alebo Zastaviť)</label>
+    <div id="tires" class="tires"></div>
+    <small id="tireInfo"></small>
   </div>
 
   <div class="card">
@@ -447,7 +463,7 @@ async function run(fn) {
 }
 function enable(connected) {
   const c = connected && dev && dev.gatt.connected;
-  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bRegTest', 'bReg', 'bRestore', 'bMon', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
+  for (const id of ['bScan', 'bAuto', 'bExt', 'bNew', 'bQ2A', 'bQ7C6', 'bTires', 'bRegTest', 'bReg', 'bRestore', 'bMon', 'bOne', 'bSend', 'bTpms']) $(id).disabled = !c || busy;
   $('bStop').disabled = !busy;
 }
 
@@ -588,6 +604,50 @@ $('bRegTest').onclick = () => run(() => registerSafe('same'));
 $('bReg').onclick = () => run(() => registerSafe('new'));
 $('bRestore').onclick = () => run(() => registerSafe('restore'));
 showBak();
+// ---------- tlaky pneumatík (OBDb Toyota-RAV4: 21 30 tlak = X/58 − 0,5 bar, 21 16 teplota = X − 40 °C; bajty FL, FR, RL, RR, rezerva) ----------
+const WHEELS = ['Ľavé predné', 'Pravé predné', 'Ľavé zadné', 'Pravé zadné'];
+async function readLid(lid) {
+  for (let a = 0; a < 3; a++) {
+    const r = await request(0x750, 0x758, [0x21, lid], 0x2A, 4000);
+    if (r && r[0] === 0x61 && r[1] === lid) return r.slice(2);
+  }
+  return null;
+}
+function drawTires(p, t, ids) {
+  $('tires').innerHTML = WHEELS.map((w, i) => {
+    const pb = p && p[i], tb = t && t[i];
+    const has = pb !== undefined && pb !== 0 && pb !== 0xFF;
+    const bar = has ? (pb / 58 - 0.5).toFixed(2) + ' bar' : 'bez údajov';
+    const tc = tb !== undefined && tb !== 0 && tb !== 0xFF ? (tb - 40) + ' °C' : '–';
+    const raw = `0x${(pb ?? 0).toString(16).padStart(2, '0').toUpperCase()} / 0x${(tb ?? 0).toString(16).padStart(2, '0').toUpperCase()}`;
+    return `<div class="tire${has ? '' : ' nodata'}"><div class="pos">${w}</div><div class="p">${bar}</div><div class="t">${tc}</div><div class="raw">surové ${raw}</div></div>`;
+  }).join('');
+  $('tireInfo').textContent = (ids ? `Registrované ID (sloty 0F–12): ${ids.join(' ')}. ` : '') + 'Pozície kolies podľa OBDb – nie je overené, či tento model pozície rozlišuje. Aktualizované ' + new Date().toLocaleTimeString('sk') + '.';
+}
+async function readTires(withIds) {
+  extRaw = true; state = null; await cmd('ATSTFF');
+  try {
+    const p = await readLid(0x30), t = await readLid(0x16);
+    log(`  tlaky 21 30 -> ${p ? hex(p) : 'bez odpovede'} · teploty 21 16 -> ${t ? hex(t) : 'bez odpovede'}`);
+    let ids = null;
+    if (withIds) {
+      ids = [];
+      for (let i = 0; i < 4; i++) { const r = await readLid(0x0F + i); ids.push(r && r.length === 4 ? (((r[0] << 24 | r[1] << 16 | r[2] << 8 | r[3]) >>> 0) & 0x0FFFFFFF).toString(16).toUpperCase().padStart(7, '0') : '?'); }
+    }
+    drawTires(p, t, ids || readTires.ids);
+    if (ids) readTires.ids = ids;
+    if (p && p.slice(0, 4).every(b => b === 0)) log('  zatiaľ bez údajov zo snímačov – prejdite sa (≥ 25 km/h) a skúste znova.');
+  } finally { extRaw = false; state = null; }
+}
+$('bTires').onclick = () => run(async () => {
+  log('\n=== Tlaky pneumatík (750 / 2A) ===');
+  await readTires(true);
+  while ($('tireLoop').checked && !stopFlag) {
+    for (let i = 0; i < 20 && $('tireLoop').checked && !stopFlag; i++) await sleep(250);
+    if (!$('tireLoop').checked || stopFlag) break;
+    await readTires(false);
+  }
+});
 $('bMon').onclick = () => run(async () => {
   log('\n=== Odpočúvanie 750–75F (Zastaviť = koniec) ===');
   await cmd('ATCAF0'); await cmd('ATCRA'); await cmd('ATCF750'); await cmd('ATCM7F0'); await cmd('ATCSM1');
